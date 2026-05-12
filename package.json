@@ -1,0 +1,19 @@
+{
+  "name": "construct",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "pnpm --filter frontend tauri dev",
+    "dev:mise": "mise exec -- pnpm dev",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.18.3",
+  "dependencies": {
+    "turbo": "^2.9.12"
+  }
+}
