@@ -8,8 +8,8 @@ pub struct AgentSession {
 }
 
 impl AgentSession {
-    pub fn new(cli_cmd: &str, args: Vec<&str>, _worktree_path: &str) -> Self {
-        let full_cmd = format!("{} {}", cli_cmd, args.join(" "));
+    pub fn new(acp_id: &str, _worktree_path: &str) -> Self {
+        let full_cmd = Self::resolve_acp_id(acp_id);
         let agent_config = AcpAgent::from_str(&full_cmd).expect("Failed to parse agent command");
 
         Self {
@@ -18,12 +18,25 @@ impl AgentSession {
         }
     }
 
+    fn resolve_acp_id(acp_id: &str) -> String {
+        match acp_id {
+            "gemini-cli" => "npx -y @google/gemini-cli --acp".to_string(),
+            "claude-code" => "npx -y @anthropic-ai/claude-code --acp".to_string(),
+            "cursor-agent" => "cursor-agent acp".to_string(),
+            "cline" => "npx -y @cline/cli --acp".to_string(),
+            _ => {
+                // Fallback: assume it might be a global command if not in registry
+                // or just default to gemini-cli if unknown
+                format!("npx -y {} --acp", acp_id)
+            }
+        }
+    }
+
     pub async fn prompt(&mut self, text: &str) -> anyhow::Result<String> {
         let agent_config = self.agent_config.take().ok_or_else(|| anyhow::anyhow!("Agent already spawned or not initialized"))?;
         let text_owned = text.to_string();
         let client_name = self.client_name.clone();
 
-        // AcpAgent implements ConnectTo, so it can be used as the transport/component
         let transport = agent_config;
 
         let result = Client::default().builder()
@@ -48,19 +61,16 @@ impl AgentSession {
                         responder.respond(serde_json::to_value(WriteTextFileResponse::new())?)?;
                     }
                     _ => {
-                        // Other requests can be ignored or return an error
                     }
                 }
                 Ok(())
             }, on_receive_request!())
             .connect_with(transport, |cx: ConnectionTo<Agent>| async move {
-                // 1. Initialize
                 let init_req = InitializeRequest::new(ProtocolVersion::V1)
                     .client_info(Implementation::new("Construct", "0.1.0"));
 
                 cx.send_request(init_req).block_task().await?;
 
-                // 2. Create Session and Prompt
                 let mut session = cx.build_session_cwd()?.block_task().start_session().await?;
                 session.send_prompt(text_owned)?;
 
@@ -72,16 +82,16 @@ impl AgentSession {
         Ok(result)
     }
 
-    pub async fn spawn(cli_cmd: &str, args: Vec<&str>, worktree_path: &str) -> Result<Self, String> {
-        Ok(Self::new(cli_cmd, args, worktree_path))
+    pub async fn spawn(acp_id: &str, worktree_path: &str) -> Result<Self, String> {
+        Ok(Self::new(acp_id, worktree_path))
     }
 
     pub async fn initialize(&mut self) -> Result<(), String> {
         Ok(())
     }
 
-    pub async fn run_headless(cli_cmd: &str, args: Vec<&str>, worktree_path: &str) -> Result<String, String> {
-        let mut session = Self::new(cli_cmd, args, worktree_path);
+    pub async fn run_headless(acp_id: &str, worktree_path: &str) -> Result<String, String> {
+        let mut session = Self::new(acp_id, worktree_path);
         session.prompt("").await.map_err(|e| e.to_string())
     }
 }

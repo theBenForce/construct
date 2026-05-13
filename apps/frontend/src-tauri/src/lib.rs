@@ -27,31 +27,31 @@ async fn run_init_commands(worktree_path: String, commands: String) -> Result<()
 
 #[tauri::command]
 async fn run_agent(
-    cli_cmd: String,
-    args: Vec<String>,
+    acp_id: String,
     worktree_path: String,
-    prompt: String,
-    use_acp: bool
+    prompt: String
 ) -> Result<String, String> {
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-    if use_acp {
-        let mut session = rust_acp::AgentSession::spawn(&cli_cmd, args_ref, &worktree_path).await?;
-        session.initialize().await?;
-        session.prompt(&prompt).await.map_err(|e| e.to_string())
-    } else {
-        rust_acp::AgentSession::run_headless(&cli_cmd, args_ref, &worktree_path).await
-    }
+    let mut session = rust_acp::AgentSession::spawn(&acp_id, &worktree_path).await?;
+    session.initialize().await?;
+    session.prompt(&prompt).await.map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let migrations = vec![Migration {
-        version: 1,
-        description: "create initial tables",
-        sql: include_str!("../migrations/1.sql"),
-        kind: MigrationKind::Up,
-    }];
+    let migrations = vec![
+        Migration {
+            version: 1,
+            description: "create initial tables",
+            sql: include_str!("../migrations/1.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "add acp_id to agents",
+            sql: include_str!("../migrations/2.sql"),
+            kind: MigrationKind::Up,
+        }
+    ];
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

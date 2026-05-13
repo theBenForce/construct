@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +16,11 @@ import {
 } from "@construct/components";
 import { createAgent, Agent } from "@/services/database";
 
+interface RegistryAgent {
+  id: string;
+  name: string;
+}
+
 interface AddAgentDialogProps {
   workspaceId: number;
   availableAgents: Agent[];
@@ -32,27 +37,40 @@ export function AddAgentDialog({
   onOpenChange,
 }: AddAgentDialogProps) {
   const [name, setName] = useState("");
-  const [backendType, setBackendType] = useState<
-    "gemini" | "claude" | "cursor"
-  >("gemini");
-  const [cliPath, setCliPath] = useState("");
+  const [acpId, setAcpId] = useState("");
   const [managerAgentId, setManagerAgentId] = useState<string>("none");
+  const [registry, setRegistry] = useState<RegistryAgent[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (open && registry.length === 0) {
+      setIsLoading(true);
+      fetch("https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json")
+        .then((res) => res.json())
+        .then((data) => {
+          setRegistry(data.agents || []);
+          setIsLoading(false);
+        })
+        .catch((err) => {
+          console.error("Failed to fetch registry", err);
+          setIsLoading(false);
+        });
+    }
+  }, [open, registry.length]);
 
   async function handleSubmit() {
-    if (!name) return;
+    if (!name || !acpId) return;
     await createAgent({
       workspace_id: workspaceId,
       name,
-      backend_type: backendType,
-      cli_path: cliPath || null,
+      acp_id: acpId,
       manager_agent_id:
         managerAgentId === "none" ? null : parseInt(managerAgentId),
     });
     onSuccess();
     onOpenChange(false);
     setName("");
-    setBackendType("gemini");
-    setCliPath("");
+    setAcpId("");
     setManagerAgentId("none");
   }
 
@@ -73,29 +91,23 @@ export function AddAgentDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>Backend Type</Label>
+            <Label>Agent Type (from Registry)</Label>
             <Select
-              value={backendType}
-              onValueChange={(v: any) => setBackendType(v)}
+              value={acpId}
+              onValueChange={setAcpId}
+              disabled={isLoading}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select backend" />
+                <SelectValue placeholder={isLoading ? "Loading..." : "Select agent"} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="gemini">Gemini CLI</SelectItem>
-                <SelectItem value="claude">Claude Code</SelectItem>
-                <SelectItem value="cursor">Cursor Agent</SelectItem>
+                {registry.map((agent) => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agent.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="cli">CLI Command/Path (Optional)</Label>
-            <Input
-              id="cli"
-              value={cliPath}
-              onChange={(e) => setCliPath(e.target.value)}
-              placeholder="e.g. gemini or /path/to/claude"
-            />
           </div>
           <div className="space-y-2">
             <Label>Manager Agent (Optional)</Label>
@@ -118,7 +130,9 @@ export function AddAgentDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit}>Create Agent</Button>
+          <Button onClick={handleSubmit} disabled={!name || !acpId}>
+            Create Agent
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
