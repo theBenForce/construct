@@ -1,36 +1,10 @@
-use agent_client_protocol::{Agent, ClientSideConnection, schema::*};
-use agent_client_protocol_tokio::{AcpAgent, Stdio};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use agent_client_protocol::{Client, on_receive_request, AgentRequest, Responder, ConnectionTo, Agent, schema::*};
+use agent_client_protocol_tokio::AcpAgent;
 use std::str::FromStr;
-use async_trait::async_trait;
 
 pub struct AgentSession {
     agent_config: Option<AcpAgent>,
     client_name: String,
-}
-
-struct ConstructAcpClient;
-
-#[async_trait]
-impl agent_client_protocol::Client for ConstructAcpClient {
-    async fn request_permission(&self, _args: RequestPermissionRequest) -> anyhow::Result<RequestPermissionResponse> {
-        Ok(RequestPermissionResponse { allow: true })
-    }
-
-    async fn read_text_file(&self, args: ReadTextFileRequest) -> anyhow::Result<ReadTextFileResponse> {
-        let content = tokio::fs::read_to_string(&args.path).await?;
-        Ok(ReadTextFileResponse { content })
-    }
-
-    async fn write_text_file(&self, args: WriteTextFileRequest) -> anyhow::Result<WriteTextFileResponse> {
-        tokio::fs::write(&args.path, &args.content).await?;
-        Ok(WriteTextFileResponse {})
-    }
-
-    async fn create_terminal(&self, _args: CreateTerminalRequest) -> anyhow::Result<CreateTerminalResponse> {
-        anyhow::bail!("Terminal creation not supported yet")
-    }
 }
 
 impl AgentSession {
@@ -47,30 +21,55 @@ impl AgentSession {
     pub async fn prompt(&mut self, text: &str) -> anyhow::Result<String> {
         let agent_config = self.agent_config.take().ok_or_else(|| anyhow::anyhow!("Agent already spawned or not initialized"))?;
         let text_owned = text.to_string();
+        let client_name = self.client_name.clone();
 
-        // Spawn the agent and get the transport
-        let transport = Stdio::spawn(agent_config)?;
+        // AcpAgent implements ConnectTo, so it can be used as the transport/component
+        let transport = agent_config;
 
-        // Create the client-side connection
-        // ClientSideConnection::new(transport, handler)
-        let (connection, driver) = ClientSideConnection::new(transport, ConstructAcpClient);
+        let result = Client::default().builder()
+            .name(client_name)
+            .on_receive_request(|request: AgentRequest, responder: Responder<serde_json::Value>, _cx: ConnectionTo<Agent>| async move {
+                match request {
+                    AgentRequest::RequestPermissionRequest(args) => {
+                        if let Some(option) = args.options.first() {
+                             responder.respond(serde_json::to_value(RequestPermissionOutcome::Selected(
+                                 SelectedPermissionOutcome::new(option.option_id.clone())
+                             ))?)?;
+                        } else {
+                            responder.respond(serde_json::to_value(RequestPermissionOutcome::Cancelled)?)?;
+                        }
+                    }
+                    AgentRequest::ReadTextFileRequest(args) => {
+                        let content = tokio::fs::read_to_string(&args.path).await.map_err(anyhow::Error::from)?;
+                        responder.respond(serde_json::to_value(ReadTextFileResponse::new(content))?)?;
+                    }
+                    AgentRequest::WriteTextFileRequest(args) => {
+                        tokio::fs::write(&args.path, &args.content).await.map_err(anyhow::Error::from)?;
+                        responder.respond(serde_json::to_value(WriteTextFileResponse::new())?)?;
+                    }
+                    _ => {
+                        // Other requests can be ignored or return an error
+                    }
+                }
+                Ok(())
+            }, on_receive_request!())
+            .connect_with(transport, |cx: ConnectionTo<Agent>| async move {
+                // 1. Initialize
+                let init_req = InitializeRequest::new(ProtocolVersion::V1)
+                    .client_info(Implementation::new("Construct", "0.1.0"));
 
-        // Run the driver in the background
-        let _driver_handle = tokio::spawn(driver);
+                cx.send_request(init_req).block_task().await?;
 
-        // 1. Initialize
-        connection.initialize(InitializeRequest::new(
-            ProtocolVersion::V1,
-            self.client_name.clone(),
-            "0.1.0".to_string(),
-        )).await?;
+                // 2. Create Session and Prompt
+                let mut session = cx.build_session_cwd()?.block_task().start_session().await?;
+                session.send_prompt(text_owned)?;
 
-        // 2. Create Session and Prompt
-        let mut session = connection.build_session_cwd().await?;
-        session.send_prompt(text_owned)?;
+                let response = session.read_to_string().await?;
+                Ok(response)
+            })
+            .await?;
 
-        let response = session.read_to_string().await?;
-        Ok(response)
+        Ok(result)
     }
 
     pub async fn spawn(cli_cmd: &str, args: Vec<&str>, worktree_path: &str) -> Result<Self, String> {
