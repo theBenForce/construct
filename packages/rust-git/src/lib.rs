@@ -30,21 +30,18 @@ pub fn create_worktree(repo_path: &str, ticket_id: &str) -> Result<String, Strin
 }
 
 pub fn remove_worktree(repo_path: &str, ticket_id: &str) -> Result<(), String> {
-    let repo_path = Path::new(repo_path);
-    let worktree_dir = repo_path.join(".construct").join(ticket_id);
+    let repo = Repository::open(repo_path).map_err(|e| e.to_string())?;
+    let worktree_dir = Path::new(repo_path).join(".construct").join(ticket_id);
 
-    if !worktree_dir.exists() {
-        return Ok(());
+    if worktree_dir.exists() {
+        std::fs::remove_dir_all(&worktree_dir).map_err(|e| e.to_string())?;
     }
 
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args(["worktree", "remove", "--force", &worktree_dir.to_string_lossy()])
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    if let Ok(wt) = repo.find_worktree(ticket_id) {
+        let mut opts = git2::WorktreePruneOptions::new();
+        // Since we deleted the directory, the worktree is no longer valid.
+        // Pruning will clean up the metadata in .git/worktrees/
+        wt.prune(Some(&mut opts)).map_err(|e| e.to_string())?;
     }
 
     Ok(())
