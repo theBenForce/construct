@@ -34,11 +34,11 @@ async fn run_agent(
     use_acp: bool
 ) -> Result<String, String> {
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    
+
     if use_acp {
         let mut session = rust_acp::AgentSession::spawn(&cli_cmd, args_ref, &worktree_path).await?;
         session.initialize().await?;
-        session.prompt(&prompt).await
+        session.prompt(&prompt).await.map_err(|e| e.to_string())
     } else {
         rust_acp::AgentSession::run_headless(&cli_cmd, args_ref, &worktree_path).await
     }
