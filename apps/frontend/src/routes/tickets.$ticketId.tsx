@@ -15,7 +15,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@construct/components";
-import { ArrowLeft, Folder, Users, Send, Bot, User } from "lucide-react";
+import { ArrowLeft, Folder, Users, Send, Bot, User, RefreshCw } from "lucide-react";
 import { useAppContext } from './__root'
 import { getTicketMessages, TicketMessage, createTicketMessage } from "@/services/database";
 import { invoke } from "@tauri-apps/api/core";
@@ -60,11 +60,16 @@ function TicketDetailsView() {
   }
 
   async function handleSendMessage() {
-    if (!newMessage.trim() || !ticket || !activeWorkspace || !selectedAgentId) return;
+    if (!newMessage.trim() || !ticket || !activeWorkspace || !selectedAgentId || !project) return;
 
     setIsSending(true);
     const agentIdNum = parseInt(selectedAgentId);
     const targetAgent = agents.find(a => a.id === agentIdNum);
+
+    if (!targetAgent) {
+      setIsSending(false);
+      return;
+    }
 
     try {
       // 1. Save User Message
@@ -74,16 +79,43 @@ function TicketDetailsView() {
         content: newMessage,
         agent_id: agentIdNum,
       });
+      const userPrompt = newMessage;
       setNewMessage("");
       await loadMessages();
 
-      // 2. Run Agent
-      // Note: In a real app, you'd need the worktree path. 
-      // For now, we reuse the logic or assume the agent can run headlessly.
-      // This part will be fully implemented in Step 6.
+      // 2. Prepare Worktree
+      const worktreePath = await invoke<string>("create_worktree", {
+        repoPath: project.local_path,
+        ticketId: ticket.id.toString(),
+      });
+
+      if (project.init_commands) {
+        await invoke("run_init_commands", {
+          worktreePath,
+          commands: project.init_commands,
+        });
+      }
+
+      // 3. Run Agent
+      const response = await invoke<string>("run_agent", {
+        acpId: targetAgent.acp_id,
+        worktreePath,
+        prompt: userPrompt,
+        workspaceId: activeWorkspace.id,
+      });
+
+      // 4. Save Agent Response
+      await createTicketMessage({
+        ticket_id: ticket.id,
+        role: "agent",
+        content: response,
+        agent_id: agentIdNum,
+      });
+      await loadMessages();
       
     } catch (error) {
       console.error("Error sending message:", error);
+      alert("Error: " + error);
     } finally {
       setIsSending(false);
     }
