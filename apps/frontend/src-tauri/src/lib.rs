@@ -4,6 +4,8 @@ use tauri_plugin_sql::{Migration, MigrationKind};
 use sqlx::sqlite::SqlitePoolOptions;
 use tauri::Manager;
 
+struct McpPort(u16);
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -36,14 +38,15 @@ async fn run_agent(
     prompt: String,
     _workspace_id: i32,
     _pool: tauri::State<'_, sqlx::SqlitePool>,
+    mcp_port: tauri::State<'_, McpPort>,
 ) -> Result<String, String> {
     let mut session = rust_acp::AgentSession::spawn(&acp_id, &worktree_path).await?;
     
-    // Connect the agent to our local MCP server
+    // Connect the agent to our local MCP server using the dynamic port
     let mcp_server = agent_client_protocol::schema::McpServer::Sse(
         agent_client_protocol::schema::McpServerSse::new(
             "Construct Local",
-            "http://localhost:3001/sse"
+            format!("http://localhost:{}/sse", mcp_port.0)
         )
     );
     
@@ -97,10 +100,19 @@ pub fn run() {
 
                 app_handle.manage(pool.clone());
 
-                // Start MCP Server on port 3001
+                let (port_tx, port_rx) = tokio::sync::oneshot::channel();
+
+                // Start MCP Server on a random port
                 // For now, we hardcode workspace_id 1 as default
-                if let Err(e) = mcp::run_mcp_server(pool, 1, 3001).await {
-                    eprintln!("MCP Server error: {}", e);
+                let mcp_pool = pool.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = mcp::run_mcp_server(mcp_pool, 1, port_tx).await {
+                        eprintln!("MCP Server error: {}", e);
+                    }
+                });
+
+                if let Ok(port) = port_rx.await {
+                    app_handle.manage(McpPort(port));
                 }
             });
             
