@@ -22,3 +22,9 @@ For detailed specs and patterns, refer to:
 - [spec.md](./references/spec.md)
 - [rust-patterns.md](./references/rust-patterns.md)
 - [agents.md](./references/agents.md)
+
+### Official Documentation
+- [ACP Protocol Overview](https://agentclientprotocol.com/protocol/overview)
+- [ACP Architecture](https://agentclientprotocol.com/protocol/architecture)
+- [ACP Messages](https://agentclientprotocol.com/protocol/messages)
+- [Gemini CLI ACP Guide](https://geminicli.com/docs/cli/acp-mode/)
