@@ -1,39 +1,30 @@
 use std::process::Command;
 use std::path::Path;
+use git2::{Repository, WorktreeAddOptions, BranchType};
 
 pub fn create_worktree(repo_path: &str, ticket_id: &str) -> Result<String, String> {
-    let repo_path = Path::new(repo_path);
-    let worktree_dir = repo_path.join(".construct").join(ticket_id);
+    let repo = Repository::open(repo_path).map_err(|e| e.to_string())?;
+    let worktree_dir = Path::new(repo_path).join(".construct").join(ticket_id);
     let branch_name = format!("construct/ticket-{}", ticket_id);
-
-    if !repo_path.exists() {
-        return Err(format!("Repository path does not exist: {}", repo_path.display()));
-    }
 
     if worktree_dir.exists() {
         return Ok(worktree_dir.to_string_lossy().to_string());
     }
 
-    let construct_dir = repo_path.join(".construct");
-    if !construct_dir.exists() {
-        std::fs::create_dir_all(&construct_dir).map_err(|e| e.to_string())?;
-    }
+    // Create branch if it doesn't exist
+    let head = repo.head().map_err(|e| e.to_string())?;
+    let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
 
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args([
-            "worktree",
-            "add",
-            "-b",
-            &branch_name,
-            &worktree_dir.to_string_lossy(),
-        ])
-        .output()
+    let branch = match repo.find_branch(&branch_name, BranchType::Local) {
+        Ok(b) => b,
+        Err(_) => repo.branch(&branch_name, &commit, false).map_err(|e| e.to_string())?,
+    };
+
+    let mut opts = WorktreeAddOptions::new();
+    opts.branch(Some(branch.get()));
+
+    repo.worktree(ticket_id, &worktree_dir, Some(&opts))
         .map_err(|e| e.to_string())?;
-
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
-    }
 
     Ok(worktree_dir.to_string_lossy().to_string())
 }
