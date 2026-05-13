@@ -79,7 +79,7 @@ impl AgentSession {
 
                 cx.send_request(init_req).block_task().await?;
 
-                let mut session_builder = cx.build_session_cwd()?.block_task();
+                let session_builder = cx.build_session_cwd()?.block_task();
                 // TODO: Re-enable MCP server support once type mismatches are resolved
                 /*
                 for server in mcp_servers {
