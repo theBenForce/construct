@@ -200,6 +200,35 @@ Sends a user message to the agent.
 - **Params**: `session_id`, `message`.
 - **Streaming**: The agent responds with `session/update` notifications during processing.
 
+#### Streaming Implementation (Rust SDK 0.11.1+)
+
+In version 0.11.1, the protocol uses a structured dispatch system. To handle streaming in a `run_until` loop:
+
+1.  **Match on `SessionMessage`**: Use `SessionMessage::SessionMessage(dispatch)` for updates and `SessionMessage::StopReason(_)` to detect completion.
+2.  **Handle Non-Exhaustive Enums**: `SessionMessage` is `#[non_exhaustive]`; always include a wildcard `_` arm.
+3.  **Extract Notifications**: Use `dispatch.into_notification::<SessionNotification>()`. This returns a nested `Result<Result<N, Dispatch>, Error>`.
+4.  **Access Text Chunks**: Text is deeply nested: `AgentMessageChunk` -> `ContentChunk` -> `ContentBlock::Text` -> `TextContent`.
+
+**Example Pattern:**
+```rust
+loop {
+    match session.read_update().await? {
+        SessionMessage::SessionMessage(dispatch) => {
+            if let Ok(Ok(notif)) = dispatch.into_notification::<SessionNotification>() {
+                if let SessionUpdate::AgentMessageChunk(chunk) = notif.update {
+                    if let ContentBlock::Text(text) = chunk.content {
+                        full_response.push_str(&text.text);
+                        // Emit chunk.text to UI
+                    }
+                }
+            }
+        }
+        SessionMessage::StopReason(_) => break,
+        _ => {}
+    }
+}
+```
+
 #### Agent -> Client Methods (Callbacks)
 
 ##### `session/request_permission`
