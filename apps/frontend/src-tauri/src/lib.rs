@@ -1,4 +1,8 @@
+mod mcp;
+
 use tauri_plugin_sql::{Migration, MigrationKind};
+use sqlx::sqlite::SqlitePoolOptions;
+use tauri::Manager;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -29,9 +33,21 @@ async fn run_init_commands(worktree_path: String, commands: String) -> Result<()
 async fn run_agent(
     acp_id: String,
     worktree_path: String,
-    prompt: String
+    prompt: String,
+    _workspace_id: i32,
+    _pool: tauri::State<'_, sqlx::SqlitePool>,
 ) -> Result<String, String> {
     let mut session = rust_acp::AgentSession::spawn(&acp_id, &worktree_path).await?;
+    
+    // Connect the agent to our local MCP server
+    let mcp_server = agent_client_protocol::schema::McpServer::Sse(
+        agent_client_protocol::schema::McpServerSse::new(
+            "Construct Local",
+            "http://localhost:3001/sse"
+        )
+    );
+    
+    session = session.with_mcp_server(mcp_server);
     session.initialize().await?;
     session.prompt(&prompt).await.map_err(|e| e.to_string())
 }
@@ -67,6 +83,29 @@ pub fn run() {
     }
 
     builder
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            
+            tauri::async_runtime::spawn(async move {
+                // Initialize sqlx pool for MCP server (sharing the same file)
+                let db_path = app_handle.path().app_data_dir().unwrap().join("construct.db");
+                let pool = SqlitePoolOptions::new()
+                    .max_connections(5)
+                    .connect(&format!("sqlite:{}", db_path.display()))
+                    .await
+                    .expect("Failed to connect to database");
+
+                app_handle.manage(pool.clone());
+
+                // Start MCP Server on port 3001
+                // For now, we hardcode workspace_id 1 as default
+                if let Err(e) = mcp::run_mcp_server(pool, 1, 3001).await {
+                    eprintln!("MCP Server error: {}", e);
+                }
+            });
+            
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             create_worktree,

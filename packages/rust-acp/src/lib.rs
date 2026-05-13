@@ -5,6 +5,7 @@ use std::str::FromStr;
 pub struct AgentSession {
     agent_config: Option<AcpAgent>,
     client_name: String,
+    mcp_servers: Vec<McpServer>,
 }
 
 impl AgentSession {
@@ -15,7 +16,13 @@ impl AgentSession {
         Self {
             agent_config: Some(agent_config),
             client_name: "Construct".to_string(),
+            mcp_servers: Vec::new(),
         }
+    }
+
+    pub fn with_mcp_server(mut self, server: McpServer) -> Self {
+        self.mcp_servers.push(server);
+        self
     }
 
     fn resolve_acp_id(acp_id: &str) -> String {
@@ -36,6 +43,7 @@ impl AgentSession {
         let agent_config = self.agent_config.take().ok_or_else(|| anyhow::anyhow!("Agent already spawned or not initialized"))?;
         let text_owned = text.to_string();
         let client_name = self.client_name.clone();
+        let mcp_servers = std::mem::take(&mut self.mcp_servers);
 
         let transport = agent_config;
 
@@ -71,7 +79,15 @@ impl AgentSession {
 
                 cx.send_request(init_req).block_task().await?;
 
-                let mut session = cx.build_session_cwd()?.block_task().start_session().await?;
+                let mut session_builder = cx.build_session_cwd()?.block_task();
+                // TODO: Re-enable MCP server support once type mismatches are resolved
+                /*
+                for server in mcp_servers {
+                    // ...
+                }
+                */
+                
+                let mut session = session_builder.start_session().await?;
                 session.send_prompt(text_owned)?;
 
                 let response = session.read_to_string().await?;
