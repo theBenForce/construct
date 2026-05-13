@@ -16,8 +16,8 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "@construct/components/*": ["../../packages/components/src/*"],
+      "@construct/components": ["./src"],
+      "@construct/components/*": ["./src/*"],
     },
 
     /* Linting */
@@ -27,5 +27,4 @@
     "noFallthroughCasesInSwitch": true,
   },
   "include": ["src"],
-  "references": [{ "path": "./tsconfig.node.json" }],
 }
