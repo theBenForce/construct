@@ -1,101 +1,88 @@
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
-use std::process::Stdio;
-
-#[derive(Serialize, Deserialize, Debug)]
-struct JsonRpcRequest {
-    jsonrpc: String,
-    method: String,
-    params: Value,
-    id: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct JsonRpcResponse {
-    jsonrpc: String,
-    result: Option<Value>,
-    error: Option<Value>,
-    id: Option<u64>,
-}
+use agent_client_protocol::{Agent, ClientSideConnection, schema::*};
+use agent_client_protocol_tokio::{AcpAgent, Stdio};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use std::str::FromStr;
+use async_trait::async_trait;
 
 pub struct AgentSession {
-    child: Child,
+    agent_config: Option<AcpAgent>,
+    client_name: String,
+}
+
+struct ConstructAcpClient;
+
+#[async_trait]
+impl agent_client_protocol::Client for ConstructAcpClient {
+    async fn request_permission(&self, _args: RequestPermissionRequest) -> anyhow::Result<RequestPermissionResponse> {
+        Ok(RequestPermissionResponse { allow: true })
+    }
+
+    async fn read_text_file(&self, args: ReadTextFileRequest) -> anyhow::Result<ReadTextFileResponse> {
+        let content = tokio::fs::read_to_string(&args.path).await?;
+        Ok(ReadTextFileResponse { content })
+    }
+
+    async fn write_text_file(&self, args: WriteTextFileRequest) -> anyhow::Result<WriteTextFileResponse> {
+        tokio::fs::write(&args.path, &args.content).await?;
+        Ok(WriteTextFileResponse {})
+    }
+
+    async fn create_terminal(&self, _args: CreateTerminalRequest) -> anyhow::Result<CreateTerminalResponse> {
+        anyhow::bail!("Terminal creation not supported yet")
+    }
 }
 
 impl AgentSession {
-    pub async fn spawn(cli_cmd: &str, args: Vec<&str>, worktree_path: &str) -> Result<Self, String> {
-        let child = Command::new(cli_cmd)
-            .args(args)
-            .current_dir(worktree_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("Failed to spawn agent: {}", e))?;
+    pub fn new(cli_cmd: &str, args: Vec<&str>, _worktree_path: &str) -> Self {
+        let full_cmd = format!("{} {}", cli_cmd, args.join(" "));
+        let agent_config = AcpAgent::from_str(&full_cmd).expect("Failed to parse agent command");
 
-        Ok(Self { child })
+        Self {
+            agent_config: Some(agent_config),
+            client_name: "Construct".to_string(),
+        }
     }
 
-    pub async fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        let stdin = self.child.stdin.as_mut().ok_or("Failed to open stdin")?;
-        let stdout = self.child.stdout.as_mut().ok_or("Failed to open stdout")?;
-        
-        let id = 1;
-        let request = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
-            params,
-            id,
-        };
+    pub async fn prompt(&mut self, text: &str) -> anyhow::Result<String> {
+        let agent_config = self.agent_config.take().ok_or_else(|| anyhow::anyhow!("Agent already spawned or not initialized"))?;
+        let text_owned = text.to_string();
 
-        let request_str = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-        stdin.write_all(request_str.as_bytes()).await.map_err(|e| e.to_string())?;
-        stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
-        stdin.flush().await.map_err(|e| e.to_string())?;
+        // Spawn the agent and get the transport
+        let transport = Stdio::spawn(agent_config)?;
 
-        let mut reader = BufReader::new(stdout).lines();
-        
-        while let Some(line) = reader.next_line().await.map_err(|e| e.to_string())? {
-            if let Ok(response) = serde_json::from_str::<JsonRpcResponse>(&line) {
-                if response.id == Some(id) {
-                    if let Some(error) = response.error {
-                        return Err(format!("Agent error: {}", error));
-                    }
-                    return Ok(response.result.unwrap_or(Value::Null));
-                }
-            }
-        }
+        // Create the client-side connection
+        // ClientSideConnection::new(transport, handler)
+        let (connection, driver) = ClientSideConnection::new(transport, ConstructAcpClient);
 
-        Err("Connection closed before response received".to_string())
+        // Run the driver in the background
+        let _driver_handle = tokio::spawn(driver);
+
+        // 1. Initialize
+        connection.initialize(InitializeRequest::new(
+            ProtocolVersion::V1,
+            self.client_name.clone(),
+            "0.1.0".to_string(),
+        )).await?;
+
+        // 2. Create Session and Prompt
+        let mut session = connection.build_session_cwd().await?;
+        session.send_prompt(text_owned)?;
+
+        let response = session.read_to_string().await?;
+        Ok(response)
+    }
+
+    pub async fn spawn(cli_cmd: &str, args: Vec<&str>, worktree_path: &str) -> Result<Self, String> {
+        Ok(Self::new(cli_cmd, args, worktree_path))
     }
 
     pub async fn initialize(&mut self) -> Result<(), String> {
-        self.call("initialize", json!({
-            "capabilities": {},
-            "clientInfo": { "name": "Construct", "version": "0.1.0" }
-        })).await?;
         Ok(())
     }
 
-    pub async fn prompt(&mut self, text: &str) -> Result<String, String> {
-        let result = self.call("prompt", json!({ "text": text })).await?;
-        Ok(result["text"].as_str().unwrap_or("").to_string())
-    }
-
     pub async fn run_headless(cli_cmd: &str, args: Vec<&str>, worktree_path: &str) -> Result<String, String> {
-        let output = Command::new(cli_cmd)
-            .args(args)
-            .current_dir(worktree_path)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run headless agent: {}", e))?;
-
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).to_string());
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        let mut session = Self::new(cli_cmd, args, worktree_path);
+        session.prompt("").await.map_err(|e| e.to_string())
     }
 }
