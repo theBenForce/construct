@@ -87,6 +87,12 @@ pub fn run() {
             description: "add system_prompt to agents",
             sql: include_str!("../migrations/3.sql"),
             kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 4,
+            description: "create ticket_messages table",
+            sql: include_str!("../migrations/4.sql"),
+            kind: MigrationKind::Up,
         }
     ];
 

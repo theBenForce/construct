@@ -120,3 +120,32 @@ export async function createTicket(ticket: Omit<Ticket, "id">) {
     ],
   );
 }
+
+export interface TicketMessage {
+  id: number;
+  ticket_id: number;
+  role: "user" | "agent" | "system";
+  content: string;
+  agent_id: number | null;
+  created_at: string;
+}
+
+export async function getTicketMessages(
+  ticketId: number,
+): Promise<TicketMessage[]> {
+  const database = await getDb();
+  return database.select<TicketMessage[]>(
+    "SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC",
+    [ticketId],
+  );
+}
+
+export async function createTicketMessage(
+  message: Omit<TicketMessage, "id" | "created_at">,
+) {
+  const database = await getDb();
+  return database.execute(
+    "INSERT INTO ticket_messages (ticket_id, role, content, agent_id) VALUES (?, ?, ?, ?)",
+    [message.ticket_id, message.role, message.content, message.agent_id],
+  );
+}
