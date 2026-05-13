@@ -20,7 +20,7 @@ pub fn create_worktree(repo_path: &str, ticket_id: &str) -> Result<String, Strin
     };
 
     let mut opts = WorktreeAddOptions::new();
-    opts.branch(Some(branch.get()));
+    opts.reference(Some(branch.get()));
 
     repo.worktree(ticket_id, &worktree_dir, Some(&opts))
         .map_err(|e| e.to_string())?;
