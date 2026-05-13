@@ -46,3 +46,8 @@
 - [x] Move Workspace selection to a top-left dropdown.
 - [x] Move Projects, Agents, and Tickets navigation to the left sidebar.
 - [x] Update main content headers to reflect active sidebar selection.
+
+## Phase 8: Markdown Support
+- [x] Integrate `react-markdown` and `remark-gfm`.
+- [x] Configure Tailwind Typography for chat bubbles.
+- [x] Implement markdown rendering for static and streaming agent messages.
