@@ -30,18 +30,30 @@ async fn get_diff(worktree_path: String) -> Result<String, String> {
 async fn run_init_commands(worktree_path: String, commands: String) -> Result<(), String> {
     rust_git::run_init_commands(&worktree_path, &commands)
 }
-
 #[tauri::command]
 async fn run_agent(
     acp_id: String,
     worktree_path: String,
     prompt: String,
-    _workspace_id: i32,
-    _pool: tauri::State<'_, sqlx::SqlitePool>,
+    workspace_id: i32,
+    pool: tauri::State<'_, sqlx::SqlitePool>,
     mcp_port: tauri::State<'_, McpPort>,
 ) -> Result<String, String> {
+    // Fetch system prompt for this agent if it exists
+    let system_prompt = sqlx::query_scalar::<_, Option<String>>("SELECT system_prompt FROM agents WHERE acp_id = ? AND workspace_id = ?")
+        .bind(&acp_id)
+        .bind(workspace_id)
+        .fetch_optional(&*pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .flatten();
+
     let mut session = rust_acp::AgentSession::spawn(&acp_id, &worktree_path).await?;
-    
+
+    if let Some(sp) = system_prompt {
+        session = session.with_system_prompt(&sp);
+    }
+
     // Connect the agent to our local MCP server using the dynamic port
     let mcp_server = agent_client_protocol::schema::McpServer::Sse(
         agent_client_protocol::schema::McpServerSse::new(
@@ -68,6 +80,12 @@ pub fn run() {
             version: 2,
             description: "add acp_id to agents",
             sql: include_str!("../migrations/2.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 3,
+            description: "add system_prompt to agents",
+            sql: include_str!("../migrations/3.sql"),
             kind: MigrationKind::Up,
         }
     ];

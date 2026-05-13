@@ -6,6 +6,7 @@ pub struct AgentSession {
     agent_config: Option<AcpAgent>,
     client_name: String,
     mcp_servers: Vec<McpServer>,
+    system_prompt: Option<String>,
 }
 
 impl AgentSession {
@@ -17,11 +18,17 @@ impl AgentSession {
             agent_config: Some(agent_config),
             client_name: "Construct".to_string(),
             mcp_servers: Vec::new(),
+            system_prompt: None,
         }
     }
 
     pub fn with_mcp_server(mut self, server: McpServer) -> Self {
         self.mcp_servers.push(server);
+        self
+    }
+
+    pub fn with_system_prompt(mut self, prompt: &str) -> Self {
+        self.system_prompt = Some(prompt.to_string());
         self
     }
 
@@ -44,6 +51,7 @@ impl AgentSession {
         let text_owned = text.to_string();
         let client_name = self.client_name.clone();
         let _mcp_servers = std::mem::take(&mut self.mcp_servers);
+        let system_prompt = self.system_prompt.take();
 
         let transport = agent_config;
 
@@ -74,18 +82,32 @@ impl AgentSession {
                 Ok(())
             }, on_receive_request!())
             .connect_with(transport, |cx: ConnectionTo<Agent>| async move {
-                let init_req = InitializeRequest::new(ProtocolVersion::V1)
+                let mut init_req = InitializeRequest::new(ProtocolVersion::V1)
                     .client_info(Implementation::new("Construct", "0.1.0"));
+
+                // InitializeRequest doesn't seem to have instructions in this version,
+                // but NewSessionRequest might, or we can use meta as a fallback.
+                if let Some(prompt) = system_prompt.clone() {
+                    let mut meta = serde_json::Map::new();
+                    meta.insert("instructions".to_string(), serde_json::Value::String(prompt));
+                    init_req = init_req.meta(meta);
+                }
 
                 cx.send_request(init_req).block_task().await?;
 
-                let session_builder = cx.build_session_cwd()?.block_task();
-                // TODO: Re-enable MCP server support once type mismatches are resolved
-                /*
-                for server in mcp_servers {
-                    // ...
+                let mut session_req = NewSessionRequest::new(std::env::current_dir().unwrap_or_default());
+                if !_mcp_servers.is_empty() {
+                    session_req = session_req.mcp_servers(_mcp_servers);
                 }
-                */
+                
+                // Set instructions in NewSessionRequest as well if supported or via meta
+                if let Some(prompt) = system_prompt {
+                     let mut meta = session_req.meta.clone().unwrap_or_default();
+                     meta.insert("instructions".to_string(), serde_json::Value::String(prompt));
+                     session_req = session_req.meta(meta);
+                }
+
+                let session_builder = cx.build_session_from(session_req).block_task();
                 
                 let mut session = session_builder.start_session().await?;
                 session.send_prompt(text_owned)?;

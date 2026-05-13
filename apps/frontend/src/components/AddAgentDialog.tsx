@@ -39,6 +39,7 @@ export function AddAgentDialog({
   const [name, setName] = useState("");
   const [acpId, setAcpId] = useState("");
   const [managerAgentId, setManagerAgentId] = useState<string>("none");
+  const [systemPrompt, setSystemPrompt] = useState("");
   const [registry, setRegistry] = useState<RegistryAgent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -66,12 +67,14 @@ export function AddAgentDialog({
       acp_id: acpId,
       manager_agent_id:
         managerAgentId === "none" ? null : parseInt(managerAgentId),
+      system_prompt: systemPrompt || null,
     });
     onSuccess();
     onOpenChange(false);
     setName("");
     setAcpId("");
     setManagerAgentId("none");
+    setSystemPrompt("");
   }
 
   return (
@@ -124,6 +127,16 @@ export function AddAgentDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="systemPrompt">System Charter (Instructions)</Label>
+            <textarea
+              id="systemPrompt"
+              className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder="e.g. You are the CTO. You report to the CEO. Your goal is to..."
+            />
           </div>
         </div>
         <DialogFooter>

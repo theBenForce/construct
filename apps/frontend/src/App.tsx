@@ -135,6 +135,7 @@ function App() {
         acpId: agent.acp_id,
         worktreePath,
         prompt: ticket.description || ticket.title,
+        workspaceId: activeWorkspace.id,
       });
 
       const diff = await invoke<string>("get_diff", { worktreePath });
@@ -287,23 +288,36 @@ function App() {
 
                 <TabsContent value="agents" className="mt-0 h-full">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {agents.map((agent) => (
-                      <Card key={agent.id}>
-                        <CardHeader className="pb-2 text-center">
-                          <div className="mx-auto size-12 rounded-full bg-primary/10 flex items-center justify-center mb-2">
-                            <Users className="size-6 text-primary" />
-                          </div>
-                          <CardTitle className="text-base">
-                            {agent.name}
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="text-center">
-                          <Badge variant="secondary" className="uppercase">
-                            {agent.acp_id}
-                          </Badge>
-                        </CardContent>
-                      </Card>
-                    ))}
+                    {agents.map((agent) => {
+                      const manager = agents.find(
+                        (a) => a.id === agent.manager_agent_id,
+                      );
+                      return (
+                        <Card key={agent.id}>
+                          <CardHeader className="pb-2 text-center">
+                            <div className="mx-auto size-12 rounded-full bg-primary/10 flex items-center justify-center mb-2">
+                              <Users className="size-6 text-primary" />
+                            </div>
+                            <CardTitle className="text-base">
+                              {agent.name}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="text-center space-y-2">
+                            <div className="flex flex-wrap justify-center gap-2">
+                              <Badge variant="secondary" className="uppercase">
+                                {agent.acp_id}
+                              </Badge>
+                              {manager && (
+                                <Badge variant="outline" className="flex items-center gap-1">
+                                  <Users className="size-3" />
+                                  Manager: {manager.name}
+                                </Badge>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                     {agents.length === 0 && (
                       <div className="col-span-full py-12 text-center text-muted-foreground">
                         No agents in this swarm yet.

@@ -61,6 +61,7 @@ export interface Agent {
   name: string;
   acp_id: string;
   manager_agent_id: number | null;
+  system_prompt: string | null;
 }
 
 export async function getAgents(workspaceId: number): Promise<Agent[]> {
@@ -74,12 +75,13 @@ export async function getAgents(workspaceId: number): Promise<Agent[]> {
 export async function createAgent(agent: Omit<Agent, "id">) {
   const database = await getDb();
   return database.execute(
-    "INSERT INTO agents (workspace_id, name, acp_id, manager_agent_id) VALUES (?, ?, ?, ?)",
+    "INSERT INTO agents (workspace_id, name, acp_id, manager_agent_id, system_prompt) VALUES (?, ?, ?, ?, ?)",
     [
       agent.workspace_id,
       agent.name,
       agent.acp_id,
       agent.manager_agent_id,
+      agent.system_prompt,
     ],
   );
 }
