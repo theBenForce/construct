@@ -19,6 +19,6 @@ You are a senior engineer specialized in the Agent Client Protocol (ACP). Your g
 
 ## Reference Material
 For detailed specs and patterns, refer to:
-- [spec.md](./spec.md)
-- [rust-patterns.md](./rust-patterns.md)
-- [agents.md](./agents.md)
+- [spec.md](./references/spec.md)
+- [rust-patterns.md](./references/rust-patterns.md)
+- [agents.md](./references/agents.md)
