@@ -132,11 +132,9 @@ function App() {
       }
 
       await invoke("run_agent", {
-        cliCmd: agent.cli_path || agent.backend_type,
-        args: [],
+        acpId: agent.acp_id,
         worktreePath,
         prompt: ticket.description || ticket.title,
-        useAcp: true,
       });
 
       const diff = await invoke<string>("get_diff", { worktreePath });
@@ -301,7 +299,7 @@ function App() {
                         </CardHeader>
                         <CardContent className="text-center">
                           <Badge variant="secondary" className="uppercase">
-                            {agent.backend_type}
+                            {agent.acp_id}
                           </Badge>
                         </CardContent>
                       </Card>
@@ -392,7 +390,7 @@ function App() {
               open={showAddAgent}
               onOpenChange={setShowAddAgent}
               onSuccess={handleRefresh}
-              availableAgents={[]}
+              availableAgents={agents}
             />
             <AddTicketDialog
               workspaceId={activeWorkspace.id}

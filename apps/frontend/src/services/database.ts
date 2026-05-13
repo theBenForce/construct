@@ -59,8 +59,7 @@ export interface Agent {
   id: number;
   workspace_id: number;
   name: string;
-  backend_type: "gemini" | "claude" | "cursor";
-  cli_path: string | null;
+  acp_id: string;
   manager_agent_id: number | null;
 }
 
@@ -75,12 +74,11 @@ export async function getAgents(workspaceId: number): Promise<Agent[]> {
 export async function createAgent(agent: Omit<Agent, "id">) {
   const database = await getDb();
   return database.execute(
-    "INSERT INTO agents (workspace_id, name, backend_type, cli_path, manager_agent_id) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO agents (workspace_id, name, acp_id, manager_agent_id) VALUES (?, ?, ?, ?)",
     [
       agent.workspace_id,
       agent.name,
-      agent.backend_type,
-      agent.cli_path,
+      agent.acp_id,
       agent.manager_agent_id,
     ],
   );
