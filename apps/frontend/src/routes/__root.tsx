@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, Link, useRouterState } from '@tanstack/react-router'
+import { createRootRoute, Outlet, Link, useRouterState } from '@tanstack/react-router'
 import { useEffect, useState, createContext, useContext } from "react";
 import {
   getWorkspaces,
@@ -56,7 +56,7 @@ export const useAppContext = () => {
   return context;
 };
 
-export const Route = createFileRoute('/__root')({
+export const Route = createRootRoute({
   component: RootLayout,
 })
 
@@ -73,7 +73,7 @@ function RootLayout() {
   const [showAddTicket, setShowAddTicket] = useState(false);
 
   const [showDiff, setShowDiff] = useState(false);
-  const [currentDiff, setCurrentDiff] = useState("");
+  const [currentDiff] = useState("");
 
   const state = useRouterState();
   const pathname = state.location.pathname;
