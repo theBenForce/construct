@@ -32,39 +32,64 @@ async fn run_init_commands(worktree_path: String, commands: String) -> Result<()
 }
 #[tauri::command]
 async fn run_agent(
-    acp_id: String,
+    agent_id: i32,
     worktree_path: String,
     prompt: String,
     workspace_id: i32,
+    ticket_id: Option<i32>,
+    on_chunk: tauri::ipc::Channel<String>,
     pool: tauri::State<'_, sqlx::SqlitePool>,
     mcp_port: tauri::State<'_, McpPort>,
 ) -> Result<String, String> {
-    // Fetch system prompt for this agent if it exists
-    let system_prompt = sqlx::query_scalar::<_, Option<String>>("SELECT system_prompt FROM agents WHERE acp_id = ? AND workspace_id = ?")
-        .bind(&acp_id)
+    // Fetch agent info
+    let (acp_id, system_prompt) = sqlx::query_as::<_, (String, Option<String>)>("SELECT acp_id, system_prompt FROM agents WHERE id = ? AND workspace_id = ?")
+        .bind(agent_id)
         .bind(workspace_id)
-        .fetch_optional(&*pool)
+        .fetch_one(&*pool)
         .await
-        .map_err(|e| e.to_string())?
-        .flatten();
+        .map_err(|e| e.to_string())?;
+
+    // Fetch ticket context if provided
+    let mut final_instructions = system_prompt.unwrap_or_default();
+    if let Some(tid) = ticket_id {
+        let ticket = sqlx::query("SELECT title, description FROM tickets WHERE id = ?")
+            .bind(tid)
+            .fetch_optional(&*pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        
+        if let Some(t) = ticket {
+            use sqlx::Row;
+            let title: String = t.get("title");
+            let description: Option<String> = t.get("description");
+            let context = format!(
+                "\n\nCURRENT TICKET CONTEXT:\nTitle: {}\nDescription: {}\n",
+                title,
+                description.unwrap_or_else(|| "No description provided".to_string())
+            );
+            final_instructions.push_str(&context);
+        }
+    }
 
     let mut session = rust_acp::AgentSession::spawn(&acp_id, &worktree_path).await?;
 
-    if let Some(sp) = system_prompt {
-        session = session.with_system_prompt(&sp);
+    if !final_instructions.is_empty() {
+        session = session.with_system_prompt(&final_instructions);
     }
 
     // Connect the agent to our local MCP server using the dynamic port
     let mcp_server = agent_client_protocol::schema::McpServer::Sse(
         agent_client_protocol::schema::McpServerSse::new(
             "Construct Local",
-            format!("http://localhost:{}/sse", mcp_port.0)
+            format!("http://localhost:{}/mcp", mcp_port.0)
         )
     );
     
     session = session.with_mcp_server(mcp_server);
     session.initialize().await?;
-    session.prompt(&prompt).await.map_err(|e| e.to_string())
+    session.prompt_with_callback(&prompt, Some(move |chunk| {
+        let _ = on_chunk.send(chunk);
+    })).await.map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

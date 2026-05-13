@@ -18,7 +18,7 @@ import {
 import { ArrowLeft, Folder, Users, Send, Bot, User, RefreshCw } from "lucide-react";
 import { useAppContext } from './__root'
 import { getTicketMessages, TicketMessage, createTicketMessage } from "@/services/database";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 
 export const Route = createFileRoute('/tickets/$ticketId')({
   component: TicketDetailsView,
@@ -32,6 +32,7 @@ function TicketDetailsView() {
   const [newMessage, setNewMessage] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [isSending, setIsSending] = useState(false);
+  const [streamingContent, setStreamingContent] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const ticket = tickets.find((t) => t.id.toString() === ticketId);
@@ -96,12 +97,19 @@ function TicketDetailsView() {
         });
       }
 
-      // 3. Run Agent
+      // 3. Run Agent with Streaming
+      const onChunk = new Channel<string>();
+      onChunk.onmessage = (chunk) => {
+        setStreamingContent((prev) => prev + chunk);
+      };
+
       const response = await invoke<string>("run_agent", {
-        acpId: targetAgent.acp_id,
+        agentId: agentIdNum,
         worktreePath,
         prompt: userPrompt,
         workspaceId: activeWorkspace.id,
+        ticketId: ticket.id,
+        onChunk,
       });
 
       // 4. Save Agent Response
@@ -111,6 +119,7 @@ function TicketDetailsView() {
         content: response,
         agent_id: agentIdNum,
       });
+      setStreamingContent("");
       await loadMessages();
       
     } catch (error) {
@@ -118,6 +127,7 @@ function TicketDetailsView() {
       alert("Error: " + error);
     } finally {
       setIsSending(false);
+      setStreamingContent("");
     }
   }
 
@@ -199,7 +209,23 @@ function TicketDetailsView() {
                       </div>
                     );
                   })}
-                  {messages.length === 0 && (
+                  {streamingContent && (
+                    <div className="flex gap-3">
+                      <div className="shrink-0 size-8 rounded-full flex items-center justify-center bg-primary/10 text-primary">
+                        <Bot className="size-4" />
+                      </div>
+                      <div className="max-w-[80%] space-y-1">
+                        <div className="text-xs font-medium text-muted-foreground">
+                          {agents.find(a => a.id === parseInt(selectedAgentId))?.name || "Agent"}
+                        </div>
+                        <div className="p-3 rounded-lg text-sm bg-muted rounded-tl-none relative">
+                          {streamingContent}
+                          <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse align-middle" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {messages.length === 0 && !streamingContent && (
                     <div className="text-center py-12 text-muted-foreground text-sm italic">
                       No messages yet. Send a prompt to an agent to start the conversation.
                     </div>
