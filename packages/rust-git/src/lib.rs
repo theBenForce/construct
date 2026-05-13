@@ -1,6 +1,5 @@
-use std::process::Command;
 use std::path::Path;
-use git2::{Repository, WorktreeAddOptions, BranchType};
+use git2::{Repository, WorktreeAddOptions, BranchType, DiffOptions, DiffFormat};
 
 pub fn create_worktree(repo_path: &str, ticket_id: &str) -> Result<String, String> {
     let repo = Repository::open(repo_path).map_err(|e| e.to_string())?;
@@ -48,20 +47,27 @@ pub fn remove_worktree(repo_path: &str, ticket_id: &str) -> Result<(), String> {
 }
 
 pub fn get_diff(worktree_path: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .current_dir(worktree_path)
-        .args(["diff"])
-        .output()
-        .map_err(|e| e.to_string())?;
+    let repo = Repository::open(worktree_path).map_err(|e| e.to_string())?;
+    let mut diff_opts = DiffOptions::new();
+    let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts)).map_err(|e| e.to_string())?;
 
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
-    }
+    let mut patch = String::new();
+    diff.print(DiffFormat::Patch, |_delta, _hunk, line| {
+        let origin = line.origin();
+        match origin {
+            '+' | '-' | ' ' => patch.push(origin),
+            _ => {}
+        }
+        patch.push_str(std::str::from_utf8(line.content()).unwrap_or(""));
+        true
+    }).map_err(|e| e.to_string())?;
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(patch)
 }
 
 pub fn run_init_commands(worktree_path: &str, commands: &str) -> Result<(), String> {
+    use std::process::Command;
+
     #[cfg(target_os = "windows")]
     let shell = "cmd";
     #[cfg(not(target_os = "windows"))]
