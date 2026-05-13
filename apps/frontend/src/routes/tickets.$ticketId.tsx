@@ -19,6 +19,8 @@ import { ArrowLeft, Folder, Users, Send, Bot, User, RefreshCw } from "lucide-rea
 import { useAppContext } from './__root'
 import { getTicketMessages, TicketMessage, createTicketMessage } from "@/services/database";
 import { invoke, Channel } from "@tauri-apps/api/core";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export const Route = createFileRoute('/tickets/$ticketId')({
   component: TicketDetailsView,
@@ -200,7 +202,15 @@ function TicketDetailsView() {
                             {isAgent ? (msgAgent?.name || "Agent") : "You"}
                           </div>
                           <div className={`p-3 rounded-lg text-sm ${msg.role === 'user' ? 'bg-primary text-primary-foreground rounded-tr-none' : 'bg-muted rounded-tl-none'}`}>
-                            {msg.content}
+                            {msg.role === 'user' ? (
+                              msg.content
+                            ) : (
+                              <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {msg.content}
+                                </ReactMarkdown>
+                              </div>
+                            )}
                           </div>
                           <div className="text-[10px] text-muted-foreground">
                             {new Date(msg.created_at).toLocaleString()}
@@ -219,7 +229,11 @@ function TicketDetailsView() {
                           {agents.find(a => a.id === parseInt(selectedAgentId))?.name || "Agent"}
                         </div>
                         <div className="p-3 rounded-lg text-sm bg-muted rounded-tl-none relative">
-                          {streamingContent}
+                          <div className="prose prose-sm dark:prose-invert max-w-none break-words inline-block">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {streamingContent}
+                            </ReactMarkdown>
+                          </div>
                           <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse align-middle" />
                         </div>
                       </div>
