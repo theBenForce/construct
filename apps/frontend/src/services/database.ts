@@ -35,9 +35,10 @@ export interface Project {
 
 export async function getProjects(workspaceId: number): Promise<Project[]> {
   const database = await getDb();
-  return database.select<Project[]>("SELECT * FROM projects WHERE workspace_id = ?", [
-    workspaceId,
-  ]);
+  return database.select<Project[]>(
+    "SELECT * FROM projects WHERE workspace_id = ?",
+    [workspaceId],
+  );
 }
 
 export async function createProject(project: Omit<Project, "id">) {
@@ -50,7 +51,7 @@ export async function createProject(project: Omit<Project, "id">) {
       project.repo_url,
       project.local_path,
       project.init_commands,
-    ]
+    ],
   );
 }
 
@@ -65,9 +66,10 @@ export interface Agent {
 
 export async function getAgents(workspaceId: number): Promise<Agent[]> {
   const database = await getDb();
-  return database.select<Agent[]>("SELECT * FROM agents WHERE workspace_id = ?", [
-    workspaceId,
-  ]);
+  return database.select<Agent[]>(
+    "SELECT * FROM agents WHERE workspace_id = ?",
+    [workspaceId],
+  );
 }
 
 export async function createAgent(agent: Omit<Agent, "id">) {
@@ -80,7 +82,7 @@ export async function createAgent(agent: Omit<Agent, "id">) {
       agent.backend_type,
       agent.cli_path,
       agent.manager_agent_id,
-    ]
+    ],
   );
 }
 
@@ -97,9 +99,10 @@ export interface Ticket {
 
 export async function getTickets(workspaceId: number): Promise<Ticket[]> {
   const database = await getDb();
-  return database.select<Ticket[]>("SELECT * FROM tickets WHERE workspace_id = ?", [
-    workspaceId,
-  ]);
+  return database.select<Ticket[]>(
+    "SELECT * FROM tickets WHERE workspace_id = ?",
+    [workspaceId],
+  );
 }
 
 export async function createTicket(ticket: Omit<Ticket, "id">) {
@@ -114,6 +117,6 @@ export async function createTicket(ticket: Omit<Ticket, "id">) {
       ticket.priority,
       ticket.status,
       ticket.assigned_agent_id,
-    ]
+    ],
   );
 }

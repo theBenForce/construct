@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle, 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
   DialogFooter,
   Button,
   Input,
@@ -12,9 +12,9 @@ import {
   SelectTrigger,
   SelectValue,
   SelectContent,
-  SelectItem
+  SelectItem,
 } from "@construct/components";
-import { createAgent, Agent } from "../services/database";
+import { createAgent, Agent } from "@/services/database";
 
 interface AddAgentDialogProps {
   workspaceId: number;
@@ -24,9 +24,17 @@ interface AddAgentDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export function AddAgentDialog({ workspaceId, availableAgents, onSuccess, open, onOpenChange }: AddAgentDialogProps) {
+export function AddAgentDialog({
+  workspaceId,
+  availableAgents,
+  onSuccess,
+  open,
+  onOpenChange,
+}: AddAgentDialogProps) {
   const [name, setName] = useState("");
-  const [backendType, setBackendType] = useState<"gemini" | "claude" | "cursor">("gemini");
+  const [backendType, setBackendType] = useState<
+    "gemini" | "claude" | "cursor"
+  >("gemini");
   const [cliPath, setCliPath] = useState("");
   const [managerAgentId, setManagerAgentId] = useState<string>("none");
 
@@ -37,7 +45,8 @@ export function AddAgentDialog({ workspaceId, availableAgents, onSuccess, open, 
       name,
       backend_type: backendType,
       cli_path: cliPath || null,
-      manager_agent_id: managerAgentId === "none" ? null : parseInt(managerAgentId)
+      manager_agent_id:
+        managerAgentId === "none" ? null : parseInt(managerAgentId),
     });
     onSuccess();
     onOpenChange(false);
@@ -56,11 +65,19 @@ export function AddAgentDialog({ workspaceId, availableAgents, onSuccess, open, 
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <Label htmlFor="name">Agent Name</Label>
-            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Frontend Specialist" />
+            <Input
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Frontend Specialist"
+            />
           </div>
           <div className="space-y-2">
             <Label>Backend Type</Label>
-            <Select value={backendType} onValueChange={(v: any) => setBackendType(v)}>
+            <Select
+              value={backendType}
+              onValueChange={(v: any) => setBackendType(v)}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select backend" />
               </SelectTrigger>
@@ -73,7 +90,12 @@ export function AddAgentDialog({ workspaceId, availableAgents, onSuccess, open, 
           </div>
           <div className="space-y-2">
             <Label htmlFor="cli">CLI Command/Path (Optional)</Label>
-            <Input id="cli" value={cliPath} onChange={(e) => setCliPath(e.target.value)} placeholder="e.g. gemini or /path/to/claude" />
+            <Input
+              id="cli"
+              value={cliPath}
+              onChange={(e) => setCliPath(e.target.value)}
+              placeholder="e.g. gemini or /path/to/claude"
+            />
           </div>
           <div className="space-y-2">
             <Label>Manager Agent (Optional)</Label>
@@ -84,14 +106,18 @@ export function AddAgentDialog({ workspaceId, availableAgents, onSuccess, open, 
               <SelectContent>
                 <SelectItem value="none">No Manager</SelectItem>
                 {availableAgents.map((a) => (
-                  <SelectItem key={a.id} value={a.id.toString()}>{a.name}</SelectItem>
+                  <SelectItem key={a.id} value={a.id.toString()}>
+                    {a.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
           <Button onClick={handleSubmit}>Create Agent</Button>
         </DialogFooter>
       </DialogContent>
