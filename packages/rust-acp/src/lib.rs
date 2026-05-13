@@ -43,7 +43,7 @@ impl AgentSession {
         let agent_config = self.agent_config.take().ok_or_else(|| anyhow::anyhow!("Agent already spawned or not initialized"))?;
         let text_owned = text.to_string();
         let client_name = self.client_name.clone();
-        let mcp_servers = std::mem::take(&mut self.mcp_servers);
+        let _mcp_servers = std::mem::take(&mut self.mcp_servers);
 
         let transport = agent_config;
 
