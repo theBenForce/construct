@@ -1,6 +1,11 @@
-use agent_client_protocol::{Client, on_receive_request, AgentRequest, Responder, ConnectionTo, Agent, schema::*};
+use agent_client_protocol::{
+    on_receive_request, schema::*, Agent, AgentRequest, Client, ConnectionTo, Responder,
+    SessionMessage,
+};
 use agent_client_protocol_tokio::AcpAgent;
 use std::str::FromStr;
+
+mod probe;
 
 pub struct AgentSession {
     agent_config: Option<AcpAgent>,
@@ -39,49 +44,91 @@ impl AgentSession {
             "cursor-agent" => "cursor-agent acp".to_string(),
             "cline" => "npx -y @cline/cli --acp".to_string(),
             _ => {
-                // Fallback: assume it might be a global command if not in registry
-                // or just default to gemini-cli if unknown
-                format!("npx -y {} --acp", acp_id)
+                if acp_id.contains(" ") {
+                    acp_id.to_string()
+                } else {
+                    format!("npx -y {} --acp", acp_id)
+                }
             }
         }
     }
 
     pub async fn prompt(&mut self, text: &str) -> anyhow::Result<String> {
-        let agent_config = self.agent_config.take().ok_or_else(|| anyhow::anyhow!("Agent already spawned or not initialized"))?;
+        self.prompt_with_callback(text, None::<fn(String)>).await
+    }
+
+    pub async fn prompt_with_callback<F>(
+        &mut self,
+        text: &str,
+        mut on_chunk: Option<F>,
+    ) -> anyhow::Result<String>
+    where
+        F: FnMut(String) + Send + 'static,
+    {
+        let agent_config = self
+            .agent_config
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Agent already spawned or not initialized"))?;
         let text_owned = text.to_string();
         let client_name = self.client_name.clone();
         let _mcp_servers = std::mem::take(&mut self.mcp_servers);
         let system_prompt = self.system_prompt.take();
 
         let transport = agent_config;
+        println!("[ACP] Connecting to agent: {:?}", transport);
 
         let result = Client::default().builder()
             .name(client_name)
             .on_receive_request(|request: AgentRequest, responder: Responder<serde_json::Value>, _cx: ConnectionTo<Agent>| async move {
+                println!("[ACP] Received request from agent: {:?}", request);
                 match request {
                     AgentRequest::RequestPermissionRequest(args) => {
-                        if let Some(option) = args.options.first() {
-                             responder.respond(serde_json::to_value(RequestPermissionOutcome::Selected(
-                                 SelectedPermissionOutcome::new(option.option_id.clone())
-                             ))?)?;
+                        let selected_option = args.options.iter()
+                            .find(|o| o.option_id.0.as_ref() == "proceed_always_server")
+                            .or_else(|| args.options.iter().find(|o| o.option_id.0.as_ref() == "proceed_always_tool"))
+                            .or_else(|| args.options.first());
+
+                        if let Some(option) = selected_option {
+                            println!("[ACP] Auto-approving permission: {:?}", option.option_id);
+                            let response = serde_json::json!({
+                                "outcome": {
+                                    "type": "selected",
+                                    "optionId": option.option_id
+                                }
+                            });
+                            responder.respond(response)?;
                         } else {
-                            responder.respond(serde_json::to_value(RequestPermissionOutcome::Cancelled)?)?;
+                            let response = serde_json::json!({
+                                "outcome": {
+                                    "type": "cancelled"
+                                }
+                            });
+                            responder.respond(response)?;
                         }
                     }
                     AgentRequest::ReadTextFileRequest(args) => {
                         let content = tokio::fs::read_to_string(&args.path).await.map_err(anyhow::Error::from)?;
-                        responder.respond(serde_json::to_value(ReadTextFileResponse::new(content))?)?;
+                        let response = serde_json::json!({
+                            "content": content,
+                            "outcome": { "type": "success" }
+                        });
+                        responder.respond(response)?;
                     }
                     AgentRequest::WriteTextFileRequest(args) => {
                         tokio::fs::write(&args.path, &args.content).await.map_err(anyhow::Error::from)?;
-                        responder.respond(serde_json::to_value(WriteTextFileResponse::new())?)?;
+                        let response = serde_json::json!({
+                            "outcome": { "type": "success" }
+                        });
+                        responder.respond(response)?;
                     }
                     _ => {
+                        println!("[ACP] Unhandled request type: {:?}", request);
                     }
                 }
                 Ok(())
             }, on_receive_request!())
             .connect_with(transport, |cx: ConnectionTo<Agent>| async move {
+                println!("[ACP] Connected. Initializing...");
                 let mut init_req = InitializeRequest::new(ProtocolVersion::V1)
                     .client_info(Implementation::new("Construct", "0.1.0"));
 
@@ -94,6 +141,7 @@ impl AgentSession {
                 }
 
                 cx.send_request(init_req).block_task().await?;
+                println!("[ACP] Handshake complete. Starting session...");
 
                 let mut session_req = NewSessionRequest::new(std::env::current_dir().unwrap_or_default());
                 if !_mcp_servers.is_empty() {
@@ -107,13 +155,37 @@ impl AgentSession {
                      session_req = session_req.meta(meta);
                 }
 
-                let session_builder = cx.build_session_from(session_req).block_task();
-                
-                let mut session = session_builder.start_session().await?;
-                session.send_prompt(text_owned)?;
-
-                let response = session.read_to_string().await?;
-                Ok(response)
+                cx.build_session_from(session_req)
+                    .block_task()
+                    .run_until(async |mut session| {
+                        println!("[ACP] Sending prompt: {}", text_owned);
+                        session.send_prompt(text_owned)?;
+                        let mut full_response = String::new();
+                        loop {
+                            match session.read_update().await? {
+                                SessionMessage::SessionMessage(dispatch) => {
+                                    if let Ok(Ok(notif)) = dispatch.into_notification::<SessionNotification>() {
+                                        if let SessionUpdate::AgentMessageChunk(chunk) = notif.update {
+                                            if let ContentBlock::Text(text) = chunk.content {
+                                                full_response.push_str(&text.text);
+                                                if let Some(ref mut cb) = on_chunk {
+                                                    cb(text.text);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                SessionMessage::StopReason(reason) => {
+                                    println!("[ACP] Agent stopped session: {:?}", reason);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                        println!("[ACP] Turn complete.");
+                        Ok(full_response)
+                    })
+                    .await
             })
             .await?;
 
