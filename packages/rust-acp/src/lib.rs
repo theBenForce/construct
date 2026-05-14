@@ -4,14 +4,15 @@ use agent_client_protocol::{
 };
 use agent_client_protocol_tokio::AcpAgent;
 use std::str::FromStr;
+use std::sync::Arc;
 
-mod probe;
 
 pub struct AgentSession {
     agent_config: Option<AcpAgent>,
     client_name: String,
     mcp_servers: Vec<McpServer>,
     system_prompt: Option<String>,
+    on_raw_message: Option<Box<dyn Fn(String, &str) + Send + Sync>>,
 }
 
 impl AgentSession {
@@ -24,7 +25,16 @@ impl AgentSession {
             client_name: "Construct".to_string(),
             mcp_servers: Vec::new(),
             system_prompt: None,
+            on_raw_message: None,
         }
+    }
+
+    pub fn with_raw_message_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(String, &str) + Send + Sync + 'static,
+    {
+        self.on_raw_message = Some(Box::new(callback));
+        self
     }
 
     pub fn with_mcp_server(mut self, server: McpServer) -> Self {
@@ -73,119 +83,157 @@ impl AgentSession {
         let client_name = self.client_name.clone();
         let _mcp_servers = std::mem::take(&mut self.mcp_servers);
         let system_prompt = self.system_prompt.take();
+        let on_raw = self.on_raw_message.take();
+        let on_raw_arc = Arc::new(on_raw);
 
         let transport = agent_config;
         println!("[ACP] Connecting to agent: {:?}", transport);
 
+        let on_raw_req = on_raw_arc.clone();
         let result = Client::default().builder()
             .name(client_name)
-            .on_receive_request(|request: AgentRequest, responder: Responder<serde_json::Value>, _cx: ConnectionTo<Agent>| async move {
-                println!("[ACP] Received request from agent: {:?}", request);
-                match request {
-                    AgentRequest::RequestPermissionRequest(args) => {
-                        let selected_option = args.options.iter()
-                            .find(|o| o.option_id.0.as_ref() == "proceed_always_server")
-                            .or_else(|| args.options.iter().find(|o| o.option_id.0.as_ref() == "proceed_always_tool"))
-                            .or_else(|| args.options.first());
+            .on_receive_request(move |request: AgentRequest, responder: Responder<serde_json::Value>, _cx: ConnectionTo<Agent>| {
+                let on_raw = on_raw_req.clone();
+                async move {
+                    if let Some(ref cb) = *on_raw {
+                        cb(format!("{:?}", request), "in");
+                    }
+                    println!("[ACP] Received request from agent: {:?}", request);
+                    match request {
+                        AgentRequest::RequestPermissionRequest(args) => {
+                            let selected_option = args.options.iter()
+                                .find(|o| o.option_id.0.as_ref() == "proceed_always_server")
+                                .or_else(|| args.options.iter().find(|o| o.option_id.0.as_ref() == "proceed_always_tool"))
+                                .or_else(|| args.options.first());
 
-                        if let Some(option) = selected_option {
-                            println!("[ACP] Auto-approving permission: {:?}", option.option_id);
-                            let response = serde_json::json!({
-                                "outcome": {
-                                    "type": "selected",
-                                    "optionId": option.option_id
+                            if let Some(option) = selected_option {
+                                println!("[ACP] Auto-approving permission: {:?}", option.option_id);
+                                let response = serde_json::json!({
+                                    "outcome": {
+                                        "type": "selected",
+                                        "optionId": option.option_id
+                                    }
+                                });
+                                if let Some(ref cb) = *on_raw {
+                                    cb(format!("{:?}", response), "out");
                                 }
-                            });
-                            responder.respond(response)?;
-                        } else {
-                            let response = serde_json::json!({
-                                "outcome": {
-                                    "type": "cancelled"
+                                responder.respond(response)?;
+                            } else {
+                                let response = serde_json::json!({
+                                    "outcome": {
+                                        "type": "cancelled"
+                                    }
+                                });
+                                if let Some(ref cb) = *on_raw {
+                                    cb(format!("{:?}", response), "out");
                                 }
+                                responder.respond(response)?;
+                            }
+                        }
+                        AgentRequest::ReadTextFileRequest(args) => {
+                            let content = tokio::fs::read_to_string(&args.path).await.map_err(anyhow::Error::from)?;
+                            let response = serde_json::json!({
+                                "content": content,
+                                "outcome": { "type": "success" }
                             });
+                            if let Some(ref cb) = *on_raw {
+                                cb(format!("{:?}", response), "out");
+                            }
                             responder.respond(response)?;
                         }
+                        AgentRequest::WriteTextFileRequest(args) => {
+                            tokio::fs::write(&args.path, &args.content).await.map_err(anyhow::Error::from)?;
+                            let response = serde_json::json!({
+                                "outcome": { "type": "success" }
+                            });
+                            if let Some(ref cb) = *on_raw {
+                                cb(format!("{:?}", response), "out");
+                            }
+                            responder.respond(response)?;
+                        }
+                        _ => {
+                            println!("[ACP] Unhandled request type: {:?}", request);
+                        }
                     }
-                    AgentRequest::ReadTextFileRequest(args) => {
-                        let content = tokio::fs::read_to_string(&args.path).await.map_err(anyhow::Error::from)?;
-                        let response = serde_json::json!({
-                            "content": content,
-                            "outcome": { "type": "success" }
-                        });
-                        responder.respond(response)?;
-                    }
-                    AgentRequest::WriteTextFileRequest(args) => {
-                        tokio::fs::write(&args.path, &args.content).await.map_err(anyhow::Error::from)?;
-                        let response = serde_json::json!({
-                            "outcome": { "type": "success" }
-                        });
-                        responder.respond(response)?;
-                    }
-                    _ => {
-                        println!("[ACP] Unhandled request type: {:?}", request);
-                    }
+                    Ok(())
                 }
-                Ok(())
             }, on_receive_request!())
-            .connect_with(transport, |cx: ConnectionTo<Agent>| async move {
-                println!("[ACP] Connected. Initializing...");
-                let mut init_req = InitializeRequest::new(ProtocolVersion::V1)
-                    .client_info(Implementation::new("Construct", "0.1.0"));
+            .connect_with(transport, move |cx: ConnectionTo<Agent>| {
+                let on_raw = on_raw_arc.clone();
+                async move {
+                    println!("[ACP] Connected. Initializing...");
+                    let mut init_req = InitializeRequest::new(ProtocolVersion::V1)
+                        .client_info(Implementation::new("Construct", "0.1.0"));
 
-                // InitializeRequest doesn't seem to have instructions in this version,
-                // but NewSessionRequest might, or we can use meta as a fallback.
-                if let Some(prompt) = system_prompt.clone() {
-                    let mut meta = serde_json::Map::new();
-                    meta.insert("instructions".to_string(), serde_json::Value::String(prompt));
-                    init_req = init_req.meta(meta);
-                }
+                    if let Some(prompt) = system_prompt.clone() {
+                        let mut meta = serde_json::Map::new();
+                        meta.insert("instructions".to_string(), serde_json::Value::String(prompt));
+                        init_req = init_req.meta(meta);
+                    }
 
-                cx.send_request(init_req).block_task().await?;
-                println!("[ACP] Handshake complete. Starting session...");
+                    if let Some(ref cb) = *on_raw {
+                        cb(format!("{:?}", init_req), "out");
+                    }
+                    let init_res = cx.send_request(init_req).block_task().await?;
+                    if let Some(ref cb) = *on_raw {
+                        cb(format!("{:?}", init_res), "in");
+                    }
+                    
+                    println!("[ACP] Handshake complete. Starting session...");
 
-                let mut session_req = NewSessionRequest::new(std::env::current_dir().unwrap_or_default());
-                if !_mcp_servers.is_empty() {
-                    session_req = session_req.mcp_servers(_mcp_servers);
-                }
-                
-                // Set instructions in NewSessionRequest as well if supported or via meta
-                if let Some(prompt) = system_prompt {
-                     let mut meta = session_req.meta.clone().unwrap_or_default();
-                     meta.insert("instructions".to_string(), serde_json::Value::String(prompt));
-                     session_req = session_req.meta(meta);
-                }
+                    let mut session_req = NewSessionRequest::new(std::env::current_dir().unwrap_or_default());
+                    if !_mcp_servers.is_empty() {
+                        session_req = session_req.mcp_servers(_mcp_servers);
+                    }
+                    
+                    if let Some(prompt) = system_prompt {
+                         let mut meta = session_req.meta.clone().unwrap_or_default();
+                         meta.insert("instructions".to_string(), serde_json::Value::String(prompt));
+                         session_req = session_req.meta(meta);
+                    }
 
-                cx.build_session_from(session_req)
-                    .block_task()
-                    .run_until(async |mut session| {
-                        println!("[ACP] Sending prompt: {}", text_owned);
-                        session.send_prompt(text_owned)?;
-                        let mut full_response = String::new();
-                        loop {
-                            match session.read_update().await? {
-                                SessionMessage::SessionMessage(dispatch) => {
-                                    if let Ok(Ok(notif)) = dispatch.into_notification::<SessionNotification>() {
-                                        if let SessionUpdate::AgentMessageChunk(chunk) = notif.update {
-                                            if let ContentBlock::Text(text) = chunk.content {
-                                                full_response.push_str(&text.text);
-                                                if let Some(ref mut cb) = on_chunk {
-                                                    cb(text.text);
+                    if let Some(ref cb) = *on_raw {
+                        cb(format!("{:?}", session_req), "out");
+                    }
+                    cx.build_session_from(session_req)
+                        .block_task()
+                        .run_until(async |mut session| {
+                            println!("[ACP] Sending prompt: {}", text_owned);
+                            if let Some(ref cb) = *on_raw {
+                                cb(format!("{{\"prompt\": {:?}}}", text_owned), "out");
+                            }
+                            session.send_prompt(text_owned)?;
+                            let mut full_response = String::new();
+                            loop {
+                                let msg = session.read_update().await?;
+                                if let Some(ref cb) = *on_raw {
+                                    cb(format!("{:?}", msg), "in");
+                                }
+                                match msg {
+                                    SessionMessage::SessionMessage(dispatch) => {
+                                        if let Ok(Ok(notif)) = dispatch.into_notification::<SessionNotification>() {
+                                            if let SessionUpdate::AgentMessageChunk(chunk) = notif.update {
+                                                if let ContentBlock::Text(text) = chunk.content {
+                                                    full_response.push_str(&text.text);
+                                                    if let Some(ref mut cb) = on_chunk {
+                                                        cb(text.text);
+                                                    }
                                                 }
                                             }
                                         }
                                     }
+                                    SessionMessage::StopReason(reason) => {
+                                        println!("[ACP] Agent stopped session: {:?}", reason);
+                                        break;
+                                    }
+                                    _ => {}
                                 }
-                                SessionMessage::StopReason(reason) => {
-                                    println!("[ACP] Agent stopped session: {:?}", reason);
-                                    break;
-                                }
-                                _ => {}
                             }
-                        }
-                        println!("[ACP] Turn complete.");
-                        Ok(full_response)
-                    })
-                    .await
+                            println!("[ACP] Turn complete.");
+                            Ok(full_response)
+                        })
+                        .await
+                }
             })
             .await?;
 
