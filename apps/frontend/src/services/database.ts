@@ -107,7 +107,7 @@ export async function getTickets(workspaceId: number): Promise<Ticket[]> {
 
 export async function createTicket(ticket: Omit<Ticket, "id">) {
   const database = await getDb();
-  return database.execute(
+  const result = await database.execute(
     "INSERT INTO tickets (workspace_id, project_id, title, description, priority, status, assigned_agent_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
     [
       ticket.workspace_id,
@@ -119,6 +119,15 @@ export async function createTicket(ticket: Omit<Ticket, "id">) {
       ticket.assigned_agent_id,
     ],
   );
+
+  if (ticket.assigned_agent_id && result.lastInsertId) {
+    await database.execute(
+      "INSERT INTO agent_queue (agent_id, ticket_id, task_type, status) VALUES (?, ?, ?, ?)",
+      [ticket.assigned_agent_id, result.lastInsertId, 'initial_assignment', 'pending']
+    );
+  }
+  
+  return result;
 }
 
 export async function updateTicketStatus(ticketId: number, status: Ticket["status"]) {
