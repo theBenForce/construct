@@ -211,6 +211,11 @@ impl McpServer {
 
     #[tool(description = "Create a new ticket in the workspace")]
     async fn create_ticket(&self, Parameters(params): Parameters<CreateTicketParams>) -> CallToolResult {
+        let mut tx = match self.state.pool.begin().await {
+            Ok(tx) => tx,
+            Err(e) => return self.mcp_err(e),
+        };
+
         let result = sqlx::query("INSERT INTO tickets (workspace_id, project_id, title, description, priority, status, assigned_agent_id) VALUES (?, ?, ?, ?, ?, 'open', ?)")
             .bind(self.state.workspace_id)
             .bind(params.project_id)
@@ -218,27 +223,73 @@ impl McpServer {
             .bind(&params.description)
             .bind(&params.priority)
             .bind(params.assigned_agent_id)
-            .execute(&self.state.pool)
+            .execute(&mut *tx)
             .await;
 
         match result {
-            Ok(res) => self.mcp_msg(format!("Ticket created with ID {}", res.last_insert_rowid())),
-            Err(e) => self.mcp_err(e),
+            Ok(res) => {
+                let ticket_id = res.last_insert_rowid();
+                if let Some(agent_id) = params.assigned_agent_id {
+                    let queue_result = sqlx::query("INSERT INTO agent_queue (agent_id, ticket_id, task_type, status) VALUES (?, ?, 'initial_assignment', 'pending')")
+                        .bind(agent_id)
+                        .bind(ticket_id)
+                        .execute(&mut *tx)
+                        .await;
+                    
+                    if let Err(e) = queue_result {
+                        let _ = tx.rollback().await;
+                        return self.mcp_err(e);
+                    }
+                }
+                
+                if let Err(e) = tx.commit().await {
+                    return self.mcp_err(e);
+                }
+                self.mcp_msg(format!("Ticket created with ID {}", ticket_id))
+            },
+            Err(e) => {
+                let _ = tx.rollback().await;
+                self.mcp_err(e)
+            },
         }
     }
 
     #[tool(description = "Assign a ticket to an agent")]
     async fn assign_ticket(&self, Parameters(params): Parameters<AssignTicketParams>) -> CallToolResult {
+        let mut tx = match self.state.pool.begin().await {
+            Ok(tx) => tx,
+            Err(e) => return self.mcp_err(e),
+        };
+
         let result = sqlx::query("UPDATE tickets SET assigned_agent_id = ? WHERE id = ? AND workspace_id = ?")
             .bind(params.agent_id)
             .bind(params.ticket_id)
             .bind(self.state.workspace_id)
-            .execute(&self.state.pool)
+            .execute(&mut *tx)
             .await;
 
         match result {
-            Ok(_) => self.mcp_msg(format!("Ticket {} assigned to agent {}", params.ticket_id, params.agent_id)),
-            Err(e) => self.mcp_err(e),
+            Ok(_) => {
+                let queue_result = sqlx::query("INSERT INTO agent_queue (agent_id, ticket_id, task_type, status) VALUES (?, ?, 'initial_assignment', 'pending')")
+                    .bind(params.agent_id)
+                    .bind(params.ticket_id)
+                    .execute(&mut *tx)
+                    .await;
+
+                if let Err(e) = queue_result {
+                    let _ = tx.rollback().await;
+                    return self.mcp_err(e);
+                }
+
+                if let Err(e) = tx.commit().await {
+                    return self.mcp_err(e);
+                }
+                self.mcp_msg(format!("Ticket {} assigned to agent {}", params.ticket_id, params.agent_id))
+            },
+            Err(e) => {
+                let _ = tx.rollback().await;
+                self.mcp_err(e)
+            },
         }
     }
 
