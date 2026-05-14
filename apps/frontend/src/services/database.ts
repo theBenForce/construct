@@ -93,7 +93,7 @@ export interface Ticket {
   title: string;
   description: string | null;
   priority: "low" | "medium" | "high" | "urgent";
-  status: "open" | "in_progress" | "review" | "done";
+  status: "open" | "researching" | "planning" | "in_progress" | "review" | "done" | "cancelled";
   assigned_agent_id: number | null;
 }
 
@@ -118,6 +118,14 @@ export async function createTicket(ticket: Omit<Ticket, "id">) {
       ticket.status,
       ticket.assigned_agent_id,
     ],
+  );
+}
+
+export async function updateTicketStatus(ticketId: number, status: Ticket["status"]) {
+  const database = await getDb();
+  return database.execute(
+    "UPDATE tickets SET status = ? WHERE id = ?",
+    [status, ticketId],
   );
 }
 
@@ -147,5 +155,22 @@ export async function createTicketMessage(
   return database.execute(
     "INSERT INTO ticket_messages (ticket_id, role, content, agent_id) VALUES (?, ?, ?, ?)",
     [message.ticket_id, message.role, message.content, message.agent_id],
+  );
+}
+
+export interface AgentQueueItem {
+  id: number;
+  agent_id: number;
+  ticket_id: number;
+  task_type: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  created_at: string;
+}
+
+export async function getAgentQueue(workspaceId: number): Promise<AgentQueueItem[]> {
+  const database = await getDb();
+  return database.select<AgentQueueItem[]>(
+    "SELECT aq.* FROM agent_queue aq JOIN agents a ON aq.agent_id = a.id WHERE a.workspace_id = ? ORDER BY aq.created_at DESC",
+    [workspaceId]
   );
 }
