@@ -14,13 +14,16 @@ import {
   SelectValue,
   SelectContent,
   SelectItem,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
 } from "@construct/components";
 import { ArrowLeft, Folder, Users, Send, Bot, User, RefreshCw } from "lucide-react";
 import { useAppContext } from './__root'
 import {
   getTicketMessages,
   TicketMessage,
-  createTicketMessage,
   updateTicketStatus,
   Ticket,
 } from "@/services/database";
@@ -43,16 +46,25 @@ const STATUS_OPTIONS: { label: string; value: Ticket["status"] }[] = [
   { label: "Cancelled", value: "cancelled" },
 ];
 
+interface RawLogEntry {
+  id: string;
+  timestamp: string;
+  direction: 'in' | 'out';
+  content: any;
+}
+
 function TicketDetailsView() {
   const { ticketId } = Route.useParams();
   const { tickets, projects, agents, activeWorkspace, loadWorkspaceData } = useAppContext();
   
   const [messages, setMessages] = useState<TicketMessage[]>([]);
+  const [rawLogs, setRawLogs] = useState<RawLogEntry[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [isSending, setIsSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const logScrollRef = useRef<HTMLDivElement>(null);
 
   const ticket = tickets.find((t) => t.id.toString() === ticketId);
   const project = projects.find((p) => p.id === ticket?.project_id);
@@ -74,10 +86,17 @@ function TicketDetailsView() {
   }, [messages, streamingContent]);
 
   useEffect(() => {
+    if (logScrollRef.current) {
+      logScrollRef.current.scrollTo({ top: logScrollRef.current.scrollHeight, behavior: 'smooth' });
+    }
+  }, [rawLogs]);
+
+  useEffect(() => {
     if (!ticketId) return;
 
     let unlistenChunk: (() => void) | undefined;
     let unlistenCompleted: (() => void) | undefined;
+    let unlistenRaw: (() => void) | undefined;
 
     async function setupListeners() {
       unlistenChunk = await listen<string>(`agent-chunk-${ticketId}`, (event) => {
@@ -92,6 +111,17 @@ function TicketDetailsView() {
           loadWorkspaceData(activeWorkspace.id);
         }
       });
+
+      unlistenRaw = await listen<any>(`agent-raw-${ticketId}`, (event) => {
+        setRawLogs((prev) => [
+          ...prev,
+          {
+            id: Math.random().toString(36).substring(7),
+            timestamp: new Date().toISOString(),
+            ...event.payload,
+          },
+        ]);
+      });
     }
 
     setupListeners();
@@ -99,6 +129,7 @@ function TicketDetailsView() {
     return () => {
       if (unlistenChunk) unlistenChunk();
       if (unlistenCompleted) unlistenCompleted();
+      if (unlistenRaw) unlistenRaw();
     };
   }, [ticketId, activeWorkspace]);
 
@@ -203,104 +234,137 @@ function TicketDetailsView() {
             </CardContent>
           </Card>
 
-          <Card className="flex-1 flex flex-col overflow-hidden min-h-0">
-            <CardHeader className="py-3 shrink-0">
-              <CardTitle className="text-sm font-medium">Chat History</CardTitle>
-            </CardHeader>
-            <CardContent className="flex-1 overflow-hidden p-0 flex flex-col">
-              <ScrollArea className="flex-1 p-4" viewportRef={scrollRef}>
-                <div className="space-y-4">
-                  {messages.map((msg) => {
-                    const msgAgent = agents.find(a => a.id === msg.agent_id);
-                    const isAgent = msg.role === 'agent';
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
-                      >
-                        <div className={`shrink-0 size-8 rounded-full flex items-center justify-center ${isAgent ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                          {isAgent ? <Bot className="size-4" /> : <User className="size-4" />}
-                        </div>
-                        <div className={`max-w-[80%] space-y-1 ${msg.role === 'user' ? 'text-right' : ''}`}>
-                          <div className="text-xs font-medium text-muted-foreground">
-                            {isAgent ? (msgAgent?.name || "Agent") : "You"}
+          <Tabs defaultValue="chat" className="flex-1 flex flex-col overflow-hidden min-h-0">
+            <Card className="flex-1 flex flex-col overflow-hidden min-h-0">
+              <CardHeader className="py-3 shrink-0 flex flex-row items-center justify-between">
+                <CardTitle className="text-sm font-medium">Activity</CardTitle>
+                <TabsList className="h-8">
+                  <TabsTrigger value="chat" className="text-xs">Chat</TabsTrigger>
+                  <TabsTrigger value="raw" className="text-xs">Raw Log</TabsTrigger>
+                </TabsList>
+              </CardHeader>
+              <CardContent className="flex-1 overflow-hidden p-0 flex flex-col">
+                <TabsContent value="chat" className="flex-1 overflow-hidden m-0 data-[state=inactive]:hidden flex flex-col">
+                  <ScrollArea className="flex-1 p-4" viewportRef={scrollRef}>
+                    <div className="space-y-4">
+                      {messages.map((msg) => {
+                        const msgAgent = agents.find(a => a.id === msg.agent_id);
+                        const isAgent = msg.role === 'agent';
+                        return (
+                          <div
+                            key={msg.id}
+                            className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
+                          >
+                            <div className={`shrink-0 size-8 rounded-full flex items-center justify-center ${isAgent ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
+                              {isAgent ? <Bot className="size-4" /> : <User className="size-4" />}
+                            </div>
+                            <div className={`max-w-[80%] space-y-1 ${msg.role === 'user' ? 'text-right' : ''}`}>
+                              <div className="text-xs font-medium text-muted-foreground">
+                                {isAgent ? (msgAgent?.name || "Agent") : "You"}
+                              </div>
+                              <div className={`p-3 rounded-lg text-sm text-foreground ${msg.role === 'user' ? 'bg-primary text-primary-foreground rounded-tr-none' : 'bg-muted rounded-tl-none'}`}>
+                                {msg.role === 'user' ? (
+                                  msg.content
+                                ) : (
+                                  <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                      {msg.content}
+                                    </ReactMarkdown>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {new Date(msg.created_at).toLocaleString()}
+                              </div>
+                            </div>
                           </div>
-                          <div className={`p-3 rounded-lg text-sm text-foreground ${msg.role === 'user' ? 'bg-primary text-primary-foreground rounded-tr-none' : 'bg-muted rounded-tl-none'}`}>
-                            {msg.role === 'user' ? (
-                              msg.content
-                            ) : (
-                              <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                        );
+                      })}
+                      {streamingContent && (
+                        <div className="flex gap-3">
+                          <div className="shrink-0 size-8 rounded-full flex items-center justify-center bg-primary/10 text-primary">
+                            <Bot className="size-4" />
+                          </div>
+                          <div className="max-w-[80%] space-y-1">
+                            <div className="text-xs font-medium text-muted-foreground">
+                              {agents.find(a => a.id === parseInt(selectedAgentId))?.name || "Agent"}
+                            </div>
+                            <div className="p-3 rounded-lg text-sm bg-muted text-foreground rounded-tl-none relative">
+                              <div className="prose prose-sm dark:prose-invert max-w-none break-words inline-block">
                                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                  {msg.content}
+                                  {streamingContent}
                                 </ReactMarkdown>
                               </div>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-muted-foreground">
-                            {new Date(msg.created_at).toLocaleString()}
+                              <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse align-middle" />
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                  {streamingContent && (
-                    <div className="flex gap-3">
-                      <div className="shrink-0 size-8 rounded-full flex items-center justify-center bg-primary/10 text-primary">
-                        <Bot className="size-4" />
-                      </div>
-                      <div className="max-w-[80%] space-y-1">
-                        <div className="text-xs font-medium text-muted-foreground">
-                          {agents.find(a => a.id === parseInt(selectedAgentId))?.name || "Agent"}
+                      )}
+                      {messages.length === 0 && !streamingContent && (
+                        <div className="text-center py-12 text-muted-foreground text-sm italic">
+                          No messages yet. Send a prompt to an agent to start the conversation.
                         </div>
-                        <div className="p-3 rounded-lg text-sm bg-muted text-foreground rounded-tl-none relative">
-                          <div className="prose prose-sm dark:prose-invert max-w-none break-words inline-block">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {streamingContent}
-                            </ReactMarkdown>
-                          </div>
-                          <span className="inline-block w-1 h-4 ml-1 bg-primary animate-pulse align-middle" />
-                        </div>
-                      </div>
+                      )}
                     </div>
-                  )}
-                  {messages.length === 0 && !streamingContent && (
-                    <div className="text-center py-12 text-muted-foreground text-sm italic">
-                      No messages yet. Send a prompt to an agent to start the conversation.
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
+                  </ScrollArea>
+                </TabsContent>
 
-              <div className="p-4 border-t border-border space-y-4 shrink-0">
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <Input
-                      placeholder="Type a message..."
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                      disabled={isSending}
-                    />
-                  </div>
-                  <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="Target Agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {agents.map((a) => (
-                        <SelectItem key={a.id} value={a.id.toString()}>
-                          {a.name}
-                        </SelectItem>
+                <TabsContent value="raw" className="flex-1 overflow-hidden m-0 data-[state=inactive]:hidden flex flex-col bg-zinc-950">
+                  <ScrollArea className="flex-1 p-2 font-mono text-[10px]" viewportRef={logScrollRef}>
+                    <div className="space-y-1">
+                      {rawLogs.map((log) => (
+                        <div key={log.id} className="border-b border-zinc-800 pb-1 mb-1">
+                          <div className="flex items-center gap-2 opacity-50 mb-1">
+                            <span>[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                            <span className={log.direction === 'in' ? 'text-blue-400' : 'text-green-400'}>
+                              {log.direction === 'in' ? '← IN' : '→ OUT'}
+                            </span>
+                          </div>
+                          <pre className="whitespace-pre-wrap break-all text-zinc-300">
+                            {typeof log.content === 'string' ? log.content : JSON.stringify(log.content, null, 2)}
+                          </pre>
+                        </div>
                       ))}
-                    </SelectContent>
-                  </Select>
-                  <Button onClick={handleSendMessage} disabled={isSending || !newMessage.trim() || !selectedAgentId}>
-                    {isSending ? <RefreshCw className="size-4 animate-spin" /> : <Send className="size-4" />}
-                  </Button>
+                      {rawLogs.length === 0 && (
+                        <div className="text-center py-12 text-zinc-500 italic">
+                          No raw messages recorded yet.
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+
+                <div className="p-4 border-t border-border space-y-4 shrink-0 bg-card">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <Input
+                        placeholder="Type a message..."
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                        disabled={isSending}
+                      />
+                    </div>
+                    <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Target Agent" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {agents.map((a) => (
+                          <SelectItem key={a.id} value={a.id.toString()}>
+                            {a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button onClick={handleSendMessage} disabled={isSending || !newMessage.trim() || !selectedAgentId}>
+                      {isSending ? <RefreshCw className="size-4 animate-spin" /> : <Send className="size-4" />}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </Tabs>
         </div>
 
         <div className="space-y-6">

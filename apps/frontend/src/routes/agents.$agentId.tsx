@@ -2,13 +2,11 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
   Badge,
   Button,
   ScrollArea,
 } from "@construct/components";
-import { ArrowLeft, Users, Folder, Ticket as TicketIcon } from "lucide-react";
+import { ArrowLeft, Folder } from "lucide-react";
 import { useAppContext } from './__root'
 import { Ticket } from '@/services/database';
 
