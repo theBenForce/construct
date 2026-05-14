@@ -15,6 +15,7 @@ import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TicketsIndexRouteImport } from './routes/tickets.index'
 import { Route as TicketsTicketIdRouteImport } from './routes/tickets.$ticketId'
+import { Route as AgentsAgentIdRouteImport } from './routes/agents.$agentId'
 
 const TicketsRoute = TicketsRouteImport.update({
   id: '/tickets',
@@ -46,28 +47,36 @@ const TicketsTicketIdRoute = TicketsTicketIdRouteImport.update({
   path: '/$ticketId',
   getParentRoute: () => TicketsRoute,
 } as any)
+const AgentsAgentIdRoute = AgentsAgentIdRouteImport.update({
+  id: '/$agentId',
+  path: '/$agentId',
+  getParentRoute: () => AgentsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/agents': typeof AgentsRoute
+  '/agents': typeof AgentsRouteWithChildren
   '/projects': typeof ProjectsRoute
   '/tickets': typeof TicketsRouteWithChildren
+  '/agents/$agentId': typeof AgentsAgentIdRoute
   '/tickets/$ticketId': typeof TicketsTicketIdRoute
   '/tickets/': typeof TicketsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/agents': typeof AgentsRoute
+  '/agents': typeof AgentsRouteWithChildren
   '/projects': typeof ProjectsRoute
+  '/agents/$agentId': typeof AgentsAgentIdRoute
   '/tickets/$ticketId': typeof TicketsTicketIdRoute
   '/tickets': typeof TicketsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/agents': typeof AgentsRoute
+  '/agents': typeof AgentsRouteWithChildren
   '/projects': typeof ProjectsRoute
   '/tickets': typeof TicketsRouteWithChildren
+  '/agents/$agentId': typeof AgentsAgentIdRoute
   '/tickets/$ticketId': typeof TicketsTicketIdRoute
   '/tickets/': typeof TicketsIndexRoute
 }
@@ -78,23 +87,31 @@ export interface FileRouteTypes {
     | '/agents'
     | '/projects'
     | '/tickets'
+    | '/agents/$agentId'
     | '/tickets/$ticketId'
     | '/tickets/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/agents' | '/projects' | '/tickets/$ticketId' | '/tickets'
+  to:
+    | '/'
+    | '/agents'
+    | '/projects'
+    | '/agents/$agentId'
+    | '/tickets/$ticketId'
+    | '/tickets'
   id:
     | '__root__'
     | '/'
     | '/agents'
     | '/projects'
     | '/tickets'
+    | '/agents/$agentId'
     | '/tickets/$ticketId'
     | '/tickets/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AgentsRoute: typeof AgentsRoute
+  AgentsRoute: typeof AgentsRouteWithChildren
   ProjectsRoute: typeof ProjectsRoute
   TicketsRoute: typeof TicketsRouteWithChildren
 }
@@ -143,8 +160,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TicketsTicketIdRouteImport
       parentRoute: typeof TicketsRoute
     }
+    '/agents/$agentId': {
+      id: '/agents/$agentId'
+      path: '/$agentId'
+      fullPath: '/agents/$agentId'
+      preLoaderRoute: typeof AgentsAgentIdRouteImport
+      parentRoute: typeof AgentsRoute
+    }
   }
 }
+
+interface AgentsRouteChildren {
+  AgentsAgentIdRoute: typeof AgentsAgentIdRoute
+}
+
+const AgentsRouteChildren: AgentsRouteChildren = {
+  AgentsAgentIdRoute: AgentsAgentIdRoute,
+}
+
+const AgentsRouteWithChildren =
+  AgentsRoute._addFileChildren(AgentsRouteChildren)
 
 interface TicketsRouteChildren {
   TicketsTicketIdRoute: typeof TicketsTicketIdRoute
@@ -161,7 +196,7 @@ const TicketsRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AgentsRoute: AgentsRoute,
+  AgentsRoute: AgentsRouteWithChildren,
   ProjectsRoute: ProjectsRoute,
   TicketsRoute: TicketsRouteWithChildren,
 }
