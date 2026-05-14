@@ -17,8 +17,15 @@ import {
 } from "@construct/components";
 import { ArrowLeft, Folder, Users, Send, Bot, User, RefreshCw } from "lucide-react";
 import { useAppContext } from './__root'
-import { getTicketMessages, TicketMessage, createTicketMessage } from "@/services/database";
-import { invoke, Channel } from "@tauri-apps/api/core";
+import {
+  getTicketMessages,
+  TicketMessage,
+  createTicketMessage,
+  updateTicketStatus,
+  Ticket,
+} from "@/services/database";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -26,9 +33,19 @@ export const Route = createFileRoute('/tickets/$ticketId')({
   component: TicketDetailsView,
 })
 
+const STATUS_OPTIONS: { label: string; value: Ticket["status"] }[] = [
+  { label: "Open", value: "open" },
+  { label: "Researching", value: "researching" },
+  { label: "Planning", value: "planning" },
+  { label: "In Progress", value: "in_progress" },
+  { label: "Review", value: "review" },
+  { label: "Done", value: "done" },
+  { label: "Cancelled", value: "cancelled" },
+];
+
 function TicketDetailsView() {
   const { ticketId } = Route.useParams();
-  const { tickets, projects, agents, activeWorkspace } = useAppContext();
+  const { tickets, projects, agents, activeWorkspace, loadWorkspaceData } = useAppContext();
   
   const [messages, setMessages] = useState<TicketMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
@@ -54,7 +71,36 @@ function TicketDetailsView() {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     }
-  }, [messages]);
+  }, [messages, streamingContent]);
+
+  useEffect(() => {
+    if (!ticketId) return;
+
+    let unlistenChunk: (() => void) | undefined;
+    let unlistenCompleted: (() => void) | undefined;
+
+    async function setupListeners() {
+      unlistenChunk = await listen<string>(`agent-chunk-${ticketId}`, (event) => {
+        setStreamingContent((prev) => prev + event.payload);
+      });
+
+      unlistenCompleted = await listen(`agent-completed-${ticketId}`, () => {
+        setStreamingContent("");
+        loadMessages();
+        setIsSending(false);
+        if (activeWorkspace) {
+          loadWorkspaceData(activeWorkspace.id);
+        }
+      });
+    }
+
+    setupListeners();
+
+    return () => {
+      if (unlistenChunk) unlistenChunk();
+      if (unlistenCompleted) unlistenCompleted();
+    };
+  }, [ticketId, activeWorkspace]);
 
   async function loadMessages() {
     if (!ticket) return;
@@ -75,61 +121,28 @@ function TicketDetailsView() {
     }
 
     try {
-      // 1. Save User Message
-      await createTicketMessage({
-        ticket_id: ticket.id,
-        role: "user",
+      await invoke("enqueue_message", {
+        agentId: agentIdNum,
+        ticketId: ticket.id,
         content: newMessage,
-        agent_id: agentIdNum,
       });
-      const userPrompt = newMessage;
       setNewMessage("");
       await loadMessages();
-
-      // 2. Prepare Worktree
-      const worktreePath = await invoke<string>("create_worktree", {
-        repoPath: project.local_path,
-        ticketId: ticket.id.toString(),
-      });
-
-      if (project.init_commands) {
-        await invoke("run_init_commands", {
-          worktreePath,
-          commands: project.init_commands,
-        });
-      }
-
-      // 3. Run Agent with Streaming
-      const onChunk = new Channel<string>();
-      onChunk.onmessage = (chunk) => {
-        setStreamingContent((prev) => prev + chunk);
-      };
-
-      const response = await invoke<string>("run_agent", {
-        agentId: agentIdNum,
-        worktreePath,
-        prompt: userPrompt,
-        workspaceId: activeWorkspace.id,
-        ticketId: ticket.id,
-        onChunk,
-      });
-
-      // 4. Save Agent Response
-      await createTicketMessage({
-        ticket_id: ticket.id,
-        role: "agent",
-        content: response,
-        agent_id: agentIdNum,
-      });
-      setStreamingContent("");
-      await loadMessages();
-      
     } catch (error) {
       console.error("Error sending message:", error);
       alert("Error: " + error);
-    } finally {
       setIsSending(false);
-      setStreamingContent("");
+    }
+  }
+
+  async function handleStatusChange(status: string) {
+    if (!ticket || !activeWorkspace) return;
+    try {
+      await updateTicketStatus(ticket.id, status as Ticket["status"]);
+      await loadWorkspaceData(activeWorkspace.id);
+    } catch (error) {
+      console.error("Error updating status:", error);
+      alert("Error updating status: " + error);
     }
   }
 
@@ -158,9 +171,20 @@ function TicketDetailsView() {
           </Link>
           <div>
             <h2 className="text-2xl font-bold">{ticket.title}</h2>
-            <div className="flex gap-2 mt-1">
-              <Badge variant="outline">{ticket.status}</Badge>
-              <Badge variant="secondary">{ticket.priority}</Badge>
+            <div className="flex gap-2 mt-1 items-center">
+              <Select value={ticket.status} onValueChange={handleStatusChange}>
+                <SelectTrigger className="h-7 px-2 text-xs w-[140px] uppercase font-semibold">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value} className="text-xs uppercase font-semibold">
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Badge variant="secondary" className="uppercase">{ticket.priority}</Badge>
             </div>
           </div>
         </div>
@@ -201,7 +225,7 @@ function TicketDetailsView() {
                           <div className="text-xs font-medium text-muted-foreground">
                             {isAgent ? (msgAgent?.name || "Agent") : "You"}
                           </div>
-                          <div className={`p-3 rounded-lg text-sm ${msg.role === 'user' ? 'bg-primary text-primary-foreground rounded-tr-none' : 'bg-muted rounded-tl-none'}`}>
+                          <div className={`p-3 rounded-lg text-sm text-foreground ${msg.role === 'user' ? 'bg-primary text-primary-foreground rounded-tr-none' : 'bg-muted rounded-tl-none'}`}>
                             {msg.role === 'user' ? (
                               msg.content
                             ) : (
@@ -228,7 +252,7 @@ function TicketDetailsView() {
                         <div className="text-xs font-medium text-muted-foreground">
                           {agents.find(a => a.id === parseInt(selectedAgentId))?.name || "Agent"}
                         </div>
-                        <div className="p-3 rounded-lg text-sm bg-muted rounded-tl-none relative">
+                        <div className="p-3 rounded-lg text-sm bg-muted text-foreground rounded-tl-none relative">
                           <div className="prose prose-sm dark:prose-invert max-w-none break-words inline-block">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
                               {streamingContent}
