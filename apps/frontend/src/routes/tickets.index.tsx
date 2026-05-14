@@ -91,7 +91,7 @@ function TicketsView() {
                   >
                     {ticket.priority}
                   </Badge>
-                  <Badge variant="outline">{ticket.status}</Badge>
+                  <Badge variant="outline" className="uppercase">{ticket.status}</Badge>
                 </div>
                 <div className="flex items-center gap-4 text-sm text-muted-foreground">
                   <div className="flex items-center gap-1">
